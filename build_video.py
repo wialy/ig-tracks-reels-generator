@@ -19,8 +19,8 @@ from media_utils import TOTAL_TARGET_SEC
 VIDEO_SIZE = (1080, 1920)  # (width, height)
 
 # ---- FONT / LAYOUT CONSTANTS (tweak these) ----
-CAPTION_FONT_SIZE = 48      # bottom captions (artist / title / album)
-TITLE_FONT_SIZE = 160        # top caption (folder name)
+CAPTION_FONT_SIZE = 64      # bottom captions (artist / title / album)
+TITLE_FONT_SIZE = 64        # top caption (folder name)
 CAPTION_OFFSET = 48          # distance between cover and each caption (px)
 
 
@@ -56,7 +56,7 @@ def create_text_image(label_text: str, max_width: int, font_size: int) -> np.nda
     """
 
     # Try a guaranteed macOS system font
-    mac_font_path = "/System/Library/Fonts/Supplemental/Arial.ttf"
+    mac_font_path = "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf"
 
     try:
         font = ImageFont.truetype(mac_font_path, font_size)
@@ -163,8 +163,7 @@ def main():
 
     segment_clips = []
 
-    # Cover size: 1/3 of video width (square)
-    cover_size = VIDEO_SIZE[0] // 3
+    cover_size = VIDEO_SIZE[0] // 2
 
     for idx, t in enumerate(tracks):
         artist = t["artist"]
