@@ -5,34 +5,23 @@ import json
 import math
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import (
     AudioFileClip,
     ImageClip,
     VideoFileClip,
     CompositeVideoClip,
     concatenate_videoclips,
-    TextClip,
 )
 
 from media_utils import TOTAL_TARGET_SEC
 
 VIDEO_SIZE = (1080, 1920)  # (width, height)
 
-def resize_video_clip_clip_safe(clip, target_size):
-    """
-    Fully PIL-safe resizing: manually resizes each frame using
-    Pillow's modern LANCZOS (no MoviePy ANTIALIAS used).
-    """
-    tw, th = target_size
-
-    def resize_frame(frame):
-        # frame = numpy array, convert → PIL, resize → array
-        img = Image.fromarray(frame)
-        img = img.resize((tw, th), resample=Image.Resampling.LANCZOS)
-        return np.array(img)
-
-    return clip.fl_image(resize_frame)
+# ---- FONT / LAYOUT CONSTANTS (tweak these) ----
+CAPTION_FONT_SIZE = 48      # bottom captions (artist / title / album)
+TITLE_FONT_SIZE = 160        # top caption (folder name)
+CAPTION_OFFSET = 48          # distance between cover and each caption (px)
 
 
 def find_background_video(folder: str) -> str:
@@ -43,6 +32,82 @@ def find_background_video(folder: str) -> str:
         if name.lower().endswith(".mp4"):
             return os.path.join(folder, name)
     raise FileNotFoundError("No .mp4 background video found in folder")
+
+
+def resize_video_clip_clip_safe(clip, target_size):
+    """
+    Fully PIL-safe resizing: manually resizes each frame using
+    Pillow's modern LANCZOS (no MoviePy ANTIALIAS used).
+    """
+    tw, th = target_size
+
+    def resize_frame(frame):
+        img = Image.fromarray(frame)
+        img = img.resize((tw, th), resample=Image.Resampling.LANCZOS)
+        return np.array(img)
+
+    return clip.fl_image(resize_frame)
+
+
+def create_text_image(label_text: str, max_width: int, font_size: int) -> np.ndarray:
+    """
+    Render multiline text (white with subtle black shadow) into an RGBA image
+    using a REAL TTF font on macOS.
+    """
+
+    # Try a guaranteed macOS system font
+    mac_font_path = "/System/Library/Fonts/Supplemental/Arial.ttf"
+
+    try:
+        font = ImageFont.truetype(mac_font_path, font_size)
+    except Exception as e:
+        print("[WARN] Failed to load system TTF font, falling back to default:", e)
+        font = ImageFont.load_default()
+
+    dummy = Image.new("RGBA", (max_width, 400), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(dummy)
+
+    # measure multiline text
+    bbox = draw.multiline_textbbox((0, 0), label_text, font=font, spacing=8)
+    x0, y0, x1, y1 = bbox
+    text_w = x1 - x0
+    text_h = y1 - y0
+
+    pad_x = 20
+    pad_y = 20
+
+    img_w = min(max_width, text_w + 2 * pad_x)
+    img_h = text_h + 2 * pad_y
+
+    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    x_text = (img_w - text_w) // 2
+    y_text = pad_y
+
+    # shadow
+    shadow_offset = (3, 3)
+    draw.multiline_text(
+        (x_text + shadow_offset[0], y_text + shadow_offset[1]),
+        label_text,
+        font=font,
+        fill=(0, 0, 0, 200),
+        spacing=10,
+        align="center",
+    )
+
+    # main text
+    draw.multiline_text(
+        (x_text, y_text),
+        label_text,
+        font=font,
+        fill=(255, 255, 255, 255),
+        spacing=10,
+        align="center",
+    )
+
+    return np.array(img)
+
 
 
 def main():
@@ -61,6 +126,9 @@ def main():
     if not os.path.isfile(audio_path):
         print(f"Error: {audio_path} not found. Run build_audio.py first.")
         sys.exit(1)
+
+    # Folder title for top caption (e.g. "./tracks/spoti/" -> "spoti")
+    folder_title = os.path.basename(os.path.normpath(folder)) or folder
 
     # background video
     try:
@@ -84,18 +152,19 @@ def main():
 
     print(f"Creating video with {num_tracks} segments, {per_segment_sec:.2f}s each.")
 
-    # Load base background clip (no audio)
+    # Load & resize background safely
     base_bg = VideoFileClip(bg_video_path).without_audio()
-
-    # Resize to 1080x1920 (simple stretch; tweak if you prefer crop)
     base_bg = resize_video_clip_clip_safe(base_bg, VIDEO_SIZE)
 
-    # Loop the background to cover total duration (>= 15s)
+    # Loop background to cover TOTAL_TARGET_SEC (typically 15s)
     loops_needed = max(1, math.ceil(TOTAL_TARGET_SEC / base_bg.duration))
     bg_loop_clips = [base_bg] * loops_needed
     bg_loop = concatenate_videoclips(bg_loop_clips).subclip(0, TOTAL_TARGET_SEC)
 
     segment_clips = []
+
+    # Cover size: 1/3 of video width (square)
+    cover_size = VIDEO_SIZE[0] // 3
 
     for idx, t in enumerate(tracks):
         artist = t["artist"]
@@ -114,42 +183,66 @@ def main():
 
         print(f"  Segment {idx+1}: {label_text.replace(chr(10), ' / ')}")
 
-        # Load cover (already 800x800 from analyze step)
-        img = Image.open(cover_path).convert("RGB")
-        cover_arr = np.array(img)
+        # Load cover and resize to 1/3 width (Pillow)
+        cover_pil = Image.open(cover_path).convert("RGB")
+        cover_pil_resized = cover_pil.resize(
+            (cover_size, cover_size),
+            resample=Image.Resampling.LANCZOS,
+        )
+        cover_arr = np.array(cover_pil_resized)
 
         # Background slice for this segment
         seg_start = idx * per_segment_sec
         seg_end = (idx + 1) * per_segment_sec
         bg_seg = bg_loop.subclip(seg_start, seg_end)
 
+        # Cover in the center
         cover_clip = (
             ImageClip(cover_arr)
             .set_duration(per_segment_sec)
             .set_position("center")
         )
 
-        # Text overlay: white with subtle black shadow
-        # Note: TextClip usually needs ImageMagick installed
-        try:
-            text_clip = (
-                TextClip(
-                    label_text,
-                    fontsize=48,
-                    color="white",
-                    stroke_color="black",      # subtle black outline / shadow
-                    stroke_width=2,
-                    method="caption",
-                    size=(VIDEO_SIZE[0] - 160, None),  # side margins
-                )
-                .set_duration(per_segment_sec)
-                .set_position(("center", VIDEO_SIZE[1] - 260))
-            )
-            segment = CompositeVideoClip([bg_seg, cover_clip, text_clip])
-        except Exception as e:
-            print(f"  [WARN] TextClip failed for segment {idx+1}: {e}")
-            segment = CompositeVideoClip([bg_seg, cover_clip])
+        # Render bottom caption (track info)
+        caption_arr = create_text_image(
+            label_text,
+            max_width=VIDEO_SIZE[0] - 160,
+            font_size=CAPTION_FONT_SIZE,
+        )
+        caption_h = caption_arr.shape[0]
 
+        # Render top title (folder name)
+        title_arr = create_text_image(
+            folder_title,
+            max_width=VIDEO_SIZE[0] - 160,
+            font_size=TITLE_FONT_SIZE,
+        )
+        title_h = title_arr.shape[0]
+
+        # ---- Symmetric layout around cover ----
+
+        # Vertical position of cover (centered)
+        cover_top = (VIDEO_SIZE[1] - cover_size) // 2
+        cover_bottom = cover_top + cover_size
+
+        # Top caption: same distance above cover as bottom caption is below
+        top_caption_y = cover_top - CAPTION_OFFSET - title_h
+        bottom_caption_y = cover_bottom + CAPTION_OFFSET
+
+        # Build text clips
+        caption_clip = (
+            ImageClip(caption_arr)
+            .set_duration(per_segment_sec)
+            .set_position(("center", bottom_caption_y))
+        )
+
+        title_clip = (
+            ImageClip(title_arr)
+            .set_duration(per_segment_sec)
+            .set_position(("center", top_caption_y))
+        )
+
+        segment = CompositeVideoClip([bg_seg, cover_clip, caption_clip, title_clip])
         segment_clips.append(segment)
 
     final_video = concatenate_videoclips(segment_clips, method="compose")
