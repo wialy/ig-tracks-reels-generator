@@ -8,11 +8,13 @@ from pydub import AudioSegment
 
 SUPPORTED_EXT = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
 
+TOTAL_TARGET_SEC = 15.0  # final length always 15 seconds
 
-def find_best_5_seconds(filepath, target_sec=5, ignore_sec=10):
+
+def find_best_segment(filepath, target_sec=5.0, ignore_sec=10.0):
     """
-    Analyze the track and return the best 5-second start time (in seconds).
-    Heuristic: mix of loudness (RMS) + rhythmic punch (onset strength).
+    Analyze the track and return the best segment start time (in seconds),
+    of length target_sec, using a mix of loudness (RMS) + rhythmic punch (onset strength).
     """
     y, sr = librosa.load(filepath, sr=44100, mono=True)
 
@@ -39,6 +41,8 @@ def find_best_5_seconds(filepath, target_sec=5, ignore_sec=10):
     # convert target_sec -> frames
     frames_per_sec = sr / hop_length
     win_frames = int(target_sec * frames_per_sec)
+    if win_frames <= 0:
+        return 0.0
 
     # ignore intro/outro
     ignore_frames = int(ignore_sec * frames_per_sec)
@@ -107,38 +111,55 @@ def main():
         print("No supported audio files found in folder.")
         sys.exit(0)
 
-    # we only need up to 3 tracks for 15 seconds total
-    files = files[:3]
-
-    print("Found files:")
+    num_tracks = len(files)
+    print(f"Found {num_tracks} file(s):")
     for f in files:
         print("  -", os.path.basename(f))
 
+    # dynamic segment duration per track, total always 15s
+    per_segment_sec = TOTAL_TARGET_SEC / num_tracks
+    per_segment_ms = int(per_segment_sec * 1000)
+
+    print(f"\nTotal target length: {TOTAL_TARGET_SEC:.2f}s")
+    print(f"Per-track segment:   {per_segment_sec:.2f}s")
+
     segments = []
-    fade_ms = 250  # 0.25 sec fade-in/out
-    target_sec = 5
+
+    # fade: up to 250ms, but at most 1/4 of the segment
+    fade_ms = min(250, per_segment_ms // 4)
 
     for filepath in files:
         print(f"\nProcessing: {os.path.basename(filepath)}")
-        start_sec = find_best_5_seconds(filepath, target_sec=target_sec, ignore_sec=10)
-        print(f"  Best 5-second segment starts at: {start_sec:.2f}s")
+        start_sec = find_best_segment(
+            filepath,
+            target_sec=per_segment_sec,
+            ignore_sec=10.0
+        )
+        print(f"  Best segment start: {start_sec:.2f}s (len ~ {per_segment_sec:.2f}s)")
 
         audio = AudioSegment.from_file(filepath)
         start_ms = int(start_sec * 1000)
-        end_ms = start_ms + target_sec * 1000
+        end_ms = start_ms + per_segment_ms
 
+        # if near the end, shift window back
         if end_ms > len(audio):
-            # if near the end, shift window back
             end_ms = len(audio)
-            start_ms = max(0, end_ms - target_sec * 1000)
+            start_ms = max(0, end_ms - per_segment_ms)
 
         clip = audio[start_ms:end_ms]
 
-        # apply fade in/out (non-destructive if track < 500ms)
-        if len(clip) > 2 * fade_ms:
+        # if still not exactly per_segment_ms (e.g., very short file),
+        # we can pad with silence to keep lengths consistent
+        if len(clip) < per_segment_ms:
+            pad = AudioSegment.silent(duration=per_segment_ms - len(clip))
+            clip += pad
+        elif len(clip) > per_segment_ms:
+            clip = clip[:per_segment_ms]
+
+        # apply fade in/out
+        if len(clip) > 2 * fade_ms and fade_ms > 0:
             clip = clip.fade_in(fade_ms).fade_out(fade_ms)
-        else:
-            # if extremely short, just fade what we can
+        elif fade_ms > 0 and len(clip) > 0:
             half = len(clip) // 2
             clip = clip.fade_in(half).fade_out(half)
 
@@ -148,16 +169,23 @@ def main():
         print("No segments created.")
         sys.exit(0)
 
-    # concatenate segments
     combined = segments[0]
     for seg in segments[1:]:
         combined += seg
+
+    # enforce exact total length = TOTAL_TARGET_SEC
+    target_ms = int(TOTAL_TARGET_SEC * 1000)
+    if len(combined) < target_ms:
+        pad = AudioSegment.silent(duration=target_ms - len(combined))
+        combined += pad
+    elif len(combined) > target_ms:
+        combined = combined[:target_ms]
 
     out_path = os.path.join(folder, "combined_best15.mp3")
     combined.export(out_path, format="mp3")
 
     total_sec = len(combined) / 1000.0
-    print(f"\nCombined track length: {total_sec:.2f}s")
+    print(f"\nFinal combined length: {total_sec:.2f}s")
     print(f"Saved to: {out_path}")
 
 
