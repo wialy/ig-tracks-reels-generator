@@ -2,13 +2,14 @@
 import sys
 import os
 import json
+import math
 
 import numpy as np
 from PIL import Image
 from moviepy.editor import (
     AudioFileClip,
     ImageClip,
-    ColorClip,
+    VideoFileClip,
     CompositeVideoClip,
     concatenate_videoclips,
     TextClip,
@@ -16,7 +17,32 @@ from moviepy.editor import (
 
 from media_utils import TOTAL_TARGET_SEC
 
-VIDEO_SIZE = (1080, 1920)  # width, height
+VIDEO_SIZE = (1080, 1920)  # (width, height)
+
+def resize_video_clip_clip_safe(clip, target_size):
+    """
+    Fully PIL-safe resizing: manually resizes each frame using
+    Pillow's modern LANCZOS (no MoviePy ANTIALIAS used).
+    """
+    tw, th = target_size
+
+    def resize_frame(frame):
+        # frame = numpy array, convert → PIL, resize → array
+        img = Image.fromarray(frame)
+        img = img.resize((tw, th), resample=Image.Resampling.LANCZOS)
+        return np.array(img)
+
+    return clip.fl_image(resize_frame)
+
+
+def find_background_video(folder: str) -> str:
+    """
+    Return path to the first .mp4 file in the folder, or raise if none.
+    """
+    for name in sorted(os.listdir(folder)):
+        if name.lower().endswith(".mp4"):
+            return os.path.join(folder, name)
+    raise FileNotFoundError("No .mp4 background video found in folder")
 
 
 def main():
@@ -36,6 +62,15 @@ def main():
         print(f"Error: {audio_path} not found. Run build_audio.py first.")
         sys.exit(1)
 
+    # background video
+    try:
+        bg_video_path = find_background_video(folder)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"Using background video: {os.path.basename(bg_video_path)}")
+
     with open(analysis_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -47,7 +82,18 @@ def main():
     num_tracks = len(tracks)
     per_segment_sec = TOTAL_TARGET_SEC / num_tracks
 
-    print(f"Creating video with {num_tracks} segment(s), {per_segment_sec:.2f}s each.")
+    print(f"Creating video with {num_tracks} segments, {per_segment_sec:.2f}s each.")
+
+    # Load base background clip (no audio)
+    base_bg = VideoFileClip(bg_video_path).without_audio()
+
+    # Resize to 1080x1920 (simple stretch; tweak if you prefer crop)
+    base_bg = resize_video_clip_clip_safe(base_bg, VIDEO_SIZE)
+
+    # Loop the background to cover total duration (>= 15s)
+    loops_needed = max(1, math.ceil(TOTAL_TARGET_SEC / base_bg.duration))
+    bg_loop_clips = [base_bg] * loops_needed
+    bg_loop = concatenate_videoclips(bg_loop_clips).subclip(0, TOTAL_TARGET_SEC)
 
     segment_clips = []
 
@@ -72,7 +118,10 @@ def main():
         img = Image.open(cover_path).convert("RGB")
         cover_arr = np.array(img)
 
-        bg = ColorClip(size=VIDEO_SIZE, color=(5, 5, 5)).set_duration(per_segment_sec)
+        # Background slice for this segment
+        seg_start = idx * per_segment_sec
+        seg_end = (idx + 1) * per_segment_sec
+        bg_seg = bg_loop.subclip(seg_start, seg_end)
 
         cover_clip = (
             ImageClip(cover_arr)
@@ -80,23 +129,26 @@ def main():
             .set_position("center")
         )
 
-        # Text overlay
+        # Text overlay: white with subtle black shadow
+        # Note: TextClip usually needs ImageMagick installed
         try:
             text_clip = (
                 TextClip(
                     label_text,
                     fontsize=48,
                     color="white",
+                    stroke_color="black",      # subtle black outline / shadow
+                    stroke_width=2,
                     method="caption",
-                    size=(VIDEO_SIZE[0] - 160, None),  # margin left/right
+                    size=(VIDEO_SIZE[0] - 160, None),  # side margins
                 )
                 .set_duration(per_segment_sec)
                 .set_position(("center", VIDEO_SIZE[1] - 260))
             )
-            segment = CompositeVideoClip([bg, cover_clip, text_clip])
+            segment = CompositeVideoClip([bg_seg, cover_clip, text_clip])
         except Exception as e:
             print(f"  [WARN] TextClip failed for segment {idx+1}: {e}")
-            segment = CompositeVideoClip([bg, cover_clip])
+            segment = CompositeVideoClip([bg_seg, cover_clip])
 
         segment_clips.append(segment)
 
