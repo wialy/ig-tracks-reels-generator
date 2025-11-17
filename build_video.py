@@ -138,6 +138,8 @@ def make_progress_bar_clip(segment_index: int,
     - total_segments: total number of tracks (N)
     - segment_index: current track index (0-based)
     - duration: duration of this segment in seconds
+
+    Uses RGBA + a separate mask, so the bar background can be semi-transparent.
     """
     bar_width = int(VIDEO_SIZE[0] * PROGRESS_BAR_WIDTH_FACTOR)
     bar_height = PROGRESS_BAR_HEIGHT
@@ -149,24 +151,25 @@ def make_progress_bar_clip(segment_index: int,
     # width of one segment
     seg_width = (bar_width - gap * (total_segments - 1)) / total_segments
 
-    def make_frame(t):
+    def make_rgba_frame(t):
         # t in [0, duration]
         progress = max(0.0, min(1.0, t / duration))
 
-        # RGBA for drawing
+        # RGBA for drawing (transparent background)
         img = Image.new("RGBA", (bar_width, bar_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # background segments (33% white)
+        # background segments: white with low alpha (e.g. ~33% visible)
+        bg_alpha = int(255 * 0.33)
         for i in range(total_segments):
             x0 = int(i * (seg_width + gap))
             x1 = int(x0 + seg_width)
             draw.rectangle(
                 [x0, 0, x1, bar_height],
-                fill=(64, 64, 64, 255),
+                fill=(255, 255, 255, bg_alpha),
             )
 
-        # fill segments
+        # fill segments: solid white (alpha 255)
         for i in range(total_segments):
             if i < segment_index:
                 fill_progress = 1.0
@@ -185,12 +188,23 @@ def make_progress_bar_clip(segment_index: int,
                 fill=(255, 255, 255, 255),
             )
 
-        # IMPORTANT: convert RGBA -> RGB so CompositeVideoClip
-        # always sees 3-channel frames (no broadcasting error)
-        img_rgb = img.convert("RGB")
-        return np.array(img_rgb)
+        return np.array(img)
 
-    return VideoClip(make_frame, duration=duration)
+    # Color clip (RGB only)
+    def make_color_frame(t):
+        rgba = make_rgba_frame(t)
+        return rgba[..., :3]  # drop alpha
+
+    # Mask clip (single channel float 0..1)
+    def make_mask_frame(t):
+        rgba = make_rgba_frame(t)
+        alpha = rgba[..., 3]  # shape (H, W)
+        return (alpha.astype("float32") / 255.0)
+
+    color_clip = VideoClip(make_color_frame, duration=duration)
+    mask_clip = VideoClip(make_mask_frame, ismask=True, duration=duration)
+
+    return color_clip.set_mask(mask_clip)
 
 
 
