@@ -22,14 +22,14 @@ VIDEO_SIZE = (1080, 1920)  # (width, height)
 
 # ---- FONT / LAYOUT CONSTANTS (tweak these) ----
 CAPTION_FONT_SIZE = 64       # bottom captions (artist / title / album)
-TITLE_FONT_SIZE = 96         # top caption (folder name)
+TITLE_FONT_SIZE = 64         # top caption (folder name)
 TRACK_INDEX_FONT_SIZE = 48   # "Track X / N"
 CAPTION_OFFSET = 60           # distance between elements (px)
 
 # Progress bar
 PROGRESS_BAR_HEIGHT = 2
-PROGRESS_BAR_WIDTH_FACTOR = 0.7  # 70% of video width
-PROGRESS_BAR_GAP = 2             # gap between segments (px)
+PROGRESS_BAR_WIDTH_FACTOR = 0.5  # 50% of video width
+PROGRESS_BAR_GAP = 8             # gap between segments (px)
 
 
 # Try a few macOS system fonts; fall back to default if needed
@@ -248,7 +248,7 @@ def main():
     segment_clips = []
 
     # Cover size: 1/3 of video width (square)
-    cover_size = VIDEO_SIZE[0] // 3
+    cover_size = VIDEO_SIZE[0] // 2
 
     for idx, t in enumerate(tracks):
         artist = t["artist"]
@@ -323,10 +323,9 @@ def main():
         track_index_y = cover_top - CAPTION_OFFSET - track_index_h
 
         # Folder title: above track index
-        title_y = track_index_y - CAPTION_OFFSET - title_h
+        title_y = track_index_y - title_h
 
-        # Progress bar: just below cover
-        bar_y = track_index_y - CAPTION_OFFSET
+        bar_y = cover_bottom + PROGRESS_BAR_GAP
 
         # Bottom caption: below progress bar
         bottom_caption_y = cover_bottom + CAPTION_OFFSET
