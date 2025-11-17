@@ -77,18 +77,26 @@ def resize_video_clip_clip_safe(clip, target_size):
     return clip.fl_image(resize_frame)
 
 
-def create_text_image(label_text: str, max_width: int, font_size: int) -> np.ndarray:
+def create_text_image(label_text: str, max_width: int, font_size: int,
+                      line_spacing: int = 16) -> np.ndarray:
     """
     Render multiline text (white with subtle black shadow) into an RGBA image
     and return it as a numpy array.
+
+    Added: adjustable line spacing (default: 16px).
     """
     font = load_font(font_size)
 
     dummy = Image.new("RGBA", (max_width, 400), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
 
-    # measure multiline text
-    bbox = draw.multiline_textbbox((0, 0), label_text, font=font, spacing=8)
+    # measure multiline text with spacing
+    bbox = draw.multiline_textbbox(
+        (0, 0),
+        label_text,
+        font=font,
+        spacing=line_spacing,
+    )
     x0, y0, x1, y1 = bbox
     text_w = x1 - x0
     text_h = y1 - y0
@@ -105,28 +113,29 @@ def create_text_image(label_text: str, max_width: int, font_size: int) -> np.nda
     x_text = (img_w - text_w) // 2
     y_text = pad_y
 
-    # shadow (slightly transparent black)
+    # shadow
     shadow_offset = (3, 3)
     draw.multiline_text(
         (x_text + shadow_offset[0], y_text + shadow_offset[1]),
         label_text,
         font=font,
         fill=(0, 0, 0, 200),
-        spacing=10,
+        spacing=line_spacing,
         align="center",
     )
 
-    # main text (white)
+    # main white text
     draw.multiline_text(
         (x_text, y_text),
         label_text,
         font=font,
         fill=(255, 255, 255, 255),
-        spacing=10,
+        spacing=line_spacing,
         align="center",
     )
 
     return np.array(img)
+
 
 
 def make_progress_bar_clip(segment_index: int,
