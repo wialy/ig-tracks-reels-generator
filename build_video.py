@@ -12,6 +12,8 @@ from moviepy.editor import (
     VideoFileClip,
     CompositeVideoClip,
     concatenate_videoclips,
+    VideoClip,
+    ColorClip,
 )
 
 from media_utils import TOTAL_TARGET_SEC
@@ -19,9 +21,22 @@ from media_utils import TOTAL_TARGET_SEC
 VIDEO_SIZE = (1080, 1920)  # (width, height)
 
 # ---- FONT / LAYOUT CONSTANTS (tweak these) ----
-CAPTION_FONT_SIZE = 64      # bottom captions (artist / title / album)
-TITLE_FONT_SIZE = 64        # top caption (folder name)
-CAPTION_OFFSET = 48          # distance between cover and each caption (px)
+CAPTION_FONT_SIZE = 64       # bottom captions (artist / title / album)
+TITLE_FONT_SIZE = 96         # top caption (folder name)
+TRACK_INDEX_FONT_SIZE = 48   # "Track X / N"
+CAPTION_OFFSET = 60           # distance between elements (px)
+
+# Progress bar
+PROGRESS_BAR_HEIGHT = 2
+PROGRESS_BAR_WIDTH_FACTOR = 0.7  # 70% of video width
+PROGRESS_BAR_GAP = 2             # gap between segments (px)
+
+
+# Try a few macOS system fonts; fall back to default if needed
+FONT_CANDIDATES = [
+    "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+]
 
 
 def find_background_video(folder: str) -> str:
@@ -32,6 +47,19 @@ def find_background_video(folder: str) -> str:
         if name.lower().endswith(".mp4"):
             return os.path.join(folder, name)
     raise FileNotFoundError("No .mp4 background video found in folder")
+
+
+def load_font(font_size: int) -> ImageFont.FreeTypeFont:
+    """
+    Try known TTF fonts; if all fail, fall back to Pillow default.
+    """
+    for path in FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(path, font_size)
+        except Exception:
+            continue
+    print("[WARN] Could not load any TTF font, using default bitmap font.")
+    return ImageFont.load_default()
 
 
 def resize_video_clip_clip_safe(clip, target_size):
@@ -52,17 +80,9 @@ def resize_video_clip_clip_safe(clip, target_size):
 def create_text_image(label_text: str, max_width: int, font_size: int) -> np.ndarray:
     """
     Render multiline text (white with subtle black shadow) into an RGBA image
-    using a REAL TTF font on macOS.
+    and return it as a numpy array.
     """
-
-    # Try a guaranteed macOS system font
-    mac_font_path = "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf"
-
-    try:
-        font = ImageFont.truetype(mac_font_path, font_size)
-    except Exception as e:
-        print("[WARN] Failed to load system TTF font, falling back to default:", e)
-        font = ImageFont.load_default()
+    font = load_font(font_size)
 
     dummy = Image.new("RGBA", (max_width, 400), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
@@ -85,7 +105,7 @@ def create_text_image(label_text: str, max_width: int, font_size: int) -> np.nda
     x_text = (img_w - text_w) // 2
     y_text = pad_y
 
-    # shadow
+    # shadow (slightly transparent black)
     shadow_offset = (3, 3)
     draw.multiline_text(
         (x_text + shadow_offset[0], y_text + shadow_offset[1]),
@@ -96,7 +116,7 @@ def create_text_image(label_text: str, max_width: int, font_size: int) -> np.nda
         align="center",
     )
 
-    # main text
+    # main text (white)
     draw.multiline_text(
         (x_text, y_text),
         label_text,
@@ -107,6 +127,70 @@ def create_text_image(label_text: str, max_width: int, font_size: int) -> np.nda
     )
 
     return np.array(img)
+
+
+def make_progress_bar_clip(segment_index: int,
+                           total_segments: int,
+                           duration: float) -> VideoClip:
+    """
+    Create a VideoClip that draws a segmented progress bar over time.
+
+    - total_segments: total number of tracks (N)
+    - segment_index: current track index (0-based)
+    - duration: duration of this segment in seconds
+    """
+    bar_width = int(VIDEO_SIZE[0] * PROGRESS_BAR_WIDTH_FACTOR)
+    bar_height = PROGRESS_BAR_HEIGHT
+    gap = PROGRESS_BAR_GAP
+
+    if total_segments <= 0:
+        total_segments = 1
+
+    # width of one segment
+    seg_width = (bar_width - gap * (total_segments - 1)) / total_segments
+
+    def make_frame(t):
+        # t in [0, duration]
+        progress = max(0.0, min(1.0, t / duration))
+
+        # RGBA for drawing
+        img = Image.new("RGBA", (bar_width, bar_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # background segments (33% white)
+        for i in range(total_segments):
+            x0 = int(i * (seg_width + gap))
+            x1 = int(x0 + seg_width)
+            draw.rectangle(
+                [x0, 0, x1, bar_height],
+                fill=(64, 64, 64, 255),
+            )
+
+        # fill segments
+        for i in range(total_segments):
+            if i < segment_index:
+                fill_progress = 1.0
+            elif i == segment_index:
+                fill_progress = progress
+            else:
+                fill_progress = 0.0
+
+            if fill_progress <= 0:
+                continue
+
+            x0 = int(i * (seg_width + gap))
+            x1 = int(x0 + seg_width * fill_progress)
+            draw.rectangle(
+                [x0, 0, x1, bar_height],
+                fill=(255, 255, 255, 255),
+            )
+
+        # IMPORTANT: convert RGBA -> RGB so CompositeVideoClip
+        # always sees 3-channel frames (no broadcasting error)
+        img_rgb = img.convert("RGB")
+        return np.array(img_rgb)
+
+    return VideoClip(make_frame, duration=duration)
 
 
 
@@ -156,14 +240,15 @@ def main():
     base_bg = VideoFileClip(bg_video_path).without_audio()
     base_bg = resize_video_clip_clip_safe(base_bg, VIDEO_SIZE)
 
-    # Loop background to cover TOTAL_TARGET_SEC (typically 15s)
+    # Loop background to cover TOTAL_TARGET_SEC
     loops_needed = max(1, math.ceil(TOTAL_TARGET_SEC / base_bg.duration))
     bg_loop_clips = [base_bg] * loops_needed
     bg_loop = concatenate_videoclips(bg_loop_clips).subclip(0, TOTAL_TARGET_SEC)
 
     segment_clips = []
 
-    cover_size = VIDEO_SIZE[0] // 2
+    # Cover size: 1/3 of video width (square)
+    cover_size = VIDEO_SIZE[0] // 3
 
     for idx, t in enumerate(tracks):
         artist = t["artist"]
@@ -172,6 +257,7 @@ def main():
         year = t.get("year")
         cover_path = t["cover_path"]
 
+        # Build multiline caption text below cover
         lines = [artist, title]
         if album:
             if year:
@@ -202,7 +288,7 @@ def main():
             .set_position("center")
         )
 
-        # Render bottom caption (track info)
+        # Bottom caption (track info)
         caption_arr = create_text_image(
             label_text,
             max_width=VIDEO_SIZE[0] - 160,
@@ -210,7 +296,7 @@ def main():
         )
         caption_h = caption_arr.shape[0]
 
-        # Render top title (folder name)
+        # Top title (folder name, e.g. "spoti")
         title_arr = create_text_image(
             folder_title,
             max_width=VIDEO_SIZE[0] - 160,
@@ -218,14 +304,31 @@ def main():
         )
         title_h = title_arr.shape[0]
 
-        # ---- Symmetric layout around cover ----
+        # Track index caption: "Track X / N"
+        track_index_text = f"Track {idx + 1} / {num_tracks}"
+        track_index_arr = create_text_image(
+            track_index_text,
+            max_width=VIDEO_SIZE[0] - 160,
+            font_size=TRACK_INDEX_FONT_SIZE,
+        )
+        track_index_h = track_index_arr.shape[0]
+
+        # ---- Layout ----
 
         # Vertical position of cover (centered)
         cover_top = (VIDEO_SIZE[1] - cover_size) // 2
         cover_bottom = cover_top + cover_size
 
-        # Top caption: same distance above cover as bottom caption is below
-        top_caption_y = cover_top - CAPTION_OFFSET - title_h
+        # Track index: right above the cover
+        track_index_y = cover_top - CAPTION_OFFSET - track_index_h
+
+        # Folder title: above track index
+        title_y = track_index_y - CAPTION_OFFSET - title_h
+
+        # Progress bar: just below cover
+        bar_y = track_index_y - CAPTION_OFFSET
+
+        # Bottom caption: below progress bar
         bottom_caption_y = cover_bottom + CAPTION_OFFSET
 
         # Build text clips
@@ -238,10 +341,27 @@ def main():
         title_clip = (
             ImageClip(title_arr)
             .set_duration(per_segment_sec)
-            .set_position(("center", top_caption_y))
+            .set_position(("center", title_y))
         )
 
-        segment = CompositeVideoClip([bg_seg, cover_clip, caption_clip, title_clip])
+        track_index_clip = (
+            ImageClip(track_index_arr)
+            .set_duration(per_segment_sec)
+            .set_position(("center", track_index_y))
+        )
+
+        # Progress bar clip
+        progress_clip = make_progress_bar_clip(
+            segment_index=idx,
+            total_segments=num_tracks,
+            duration=per_segment_sec,
+        ).set_position(
+            ("center", bar_y)
+        )
+
+        segment = CompositeVideoClip(
+            [bg_seg, cover_clip, progress_clip, caption_clip, track_index_clip, title_clip]
+        )
         segment_clips.append(segment)
 
     final_video = concatenate_videoclips(segment_clips, method="compose")
