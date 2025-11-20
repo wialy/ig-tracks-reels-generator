@@ -57,7 +57,7 @@ def main():
             clip = clip[:dur_ms]
 
         # fades (0.25s or <= 1/4 duration)
-        fade_ms = min(250, dur_ms // 4)
+        fade_ms = min(500, dur_ms // 4)
         if len(clip) > 2 * fade_ms and fade_ms > 0:
             clip = clip.fade_in(fade_ms).fade_out(fade_ms)
         elif fade_ms > 0 and len(clip) > 0:
