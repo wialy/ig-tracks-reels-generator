@@ -12,7 +12,7 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC, ID3NoHeaderError
 
 SUPPORTED_EXT = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
-TOTAL_TARGET_SEC = 30.0
+TOTAL_TARGET_SEC = 12.0
 
 
 # ---------- AUDIO ANALYSIS (SAFE) ----------

@@ -37,6 +37,7 @@ def main():
     run_step("build_audio.py", folder)
     run_step("build_video_list.py", folder)
     run_step("cleanup.py", folder)
+    run_step("build_description.py", folder)
 
     print("\n✅ Pipeline completed successfully!")
 

@@ -20,16 +20,18 @@ from media_utils import TOTAL_TARGET_SEC
 
 VIDEO_SIZE = (1080, 1920)  # (width, height)
 
+FADE_IN_DURATION = 0.5 
+
 # ---- FONT / LAYOUT CONSTANTS (tweak these) ----
 TITLE_FONT_SIZE = 64           # top caption (folder name)
-LIST_FONT_SIZE = 64            # track list text
-CTA_FONT_SIZE = 48            # track list text
+LIST_FONT_SIZE = 48            # track list text
+CTA_FONT_SIZE = 64            # track list text
 
 # Safe zone / positioning
-SAFE_LEFT = 220                # leftmost x for the whole list+bar block
+SAFE_LEFT = 128                # leftmost x for the whole list+bar block
 LIST_VERTICAL_OFFSET = 0       # shift list block up/down after centering
 
-ROW_COVER_SIZE = 192           # cover size in list rows (square)
+ROW_COVER_SIZE = 200           # cover size in list rows (square)
 ROW_SPACING = 48               # vertical spacing between rows
 
 # Progress bar (vertical) constants
@@ -39,7 +41,9 @@ PROGRESS_BAR_ALPHA_FILL = 1.0  # fill opacity (white)
 
 # Distances between bar, cover, and text
 BAR_TO_COVER_GAP = 16            # px
-COVER_TO_TEXT_GAP = 32         # px
+COVER_TO_TEXT_GAP = 24         # px
+
+GAP = 96
 
 # Font candidates (macOS system fonts)
 FONT_CANDIDATES = [
@@ -50,11 +54,30 @@ FONT_CANDIDATES = [
 
 # ---------- Helpers ----------
 
+def apply_background_fade(clip, fade_duration: float):
+    """
+    Returns a version of `clip` where, for t in [0, fade_duration],
+    the frame is multiplied by (t / fade_duration), i.e. fades in from black.
+    Overlays (titles, covers, text) stay unaffected in CompositeVideoClip.
+    """
+    def make_frame(get_frame, t):
+        frame = get_frame(t)
+        if t >= fade_duration:
+            return frame
+        alpha = max(0.0, min(1.0, t / fade_duration))
+        # fade only background brightness
+        return (frame.astype(np.float32) * alpha).astype(np.uint8)
+
+    # fl takes a function (gf, t) -> frame
+    return clip.fl(make_frame)
+
 def find_background_video(folder: str) -> str:
     """
     Return path to the first .mp4 file in the folder, or raise if none.
     """
     for name in sorted(os.listdir(folder)):
+        if(name.lower().startswith("reel")):
+            continue
         if name.lower().endswith(".mp4"):
             return os.path.join(folder, name)
     raise FileNotFoundError("No .mp4 background video found in folder")
@@ -102,13 +125,13 @@ def create_text_image(label_text: str,
     dummy = Image.new("RGBA", (max_width, 400), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
 
-    bbox = draw.multiline_textbbox((0, 0), label_text, font=font, spacing=8)
+    bbox = draw.multiline_textbbox((0, 0), label_text, font=font, spacing=12)
     x0, y0, x1, y1 = bbox
     text_w = x1 - x0
     text_h = y1 - y0
 
     pad_x = 20
-    pad_y = 20
+    pad_y = LIST_FONT_SIZE // 2
 
     img_w = min(max_width, text_w + 2 * pad_x)
     img_h = text_h + 2 * pad_y
@@ -124,13 +147,13 @@ def create_text_image(label_text: str,
     y_text = pad_y
 
     # shadow
-    shadow_offset = (3, 3)
+    shadow_offset = (0, 2)
     draw.multiline_text(
         (x_text + shadow_offset[0], y_text + shadow_offset[1]),
         label_text,
         font=font,
         fill=(0, 0, 0, 200),
-        spacing=10,
+        spacing=LIST_FONT_SIZE // 2,
         align=align,
     )
 
@@ -140,7 +163,7 @@ def create_text_image(label_text: str,
         label_text,
         font=font,
         fill=(255, 255, 255, 255),
-        spacing=10,
+        spacing=LIST_FONT_SIZE // 2,
         align=align,
     )
 
@@ -324,6 +347,10 @@ def main():
     bg_loop_clips = [base_bg] * loops_needed
     bg_full = concatenate_videoclips(bg_loop_clips).subclip(0, total_duration)
 
+    # Apply fade from black ONLY to background,
+    # overlays (titles, covers, text, CTA) stay fully visible from t=0
+    bg_full = apply_background_fade(bg_full, FADE_IN_DURATION)
+
     # Compute list total height and center it vertically
     list_total_height = num_tracks * ROW_COVER_SIZE + (num_tracks - 1) * ROW_SPACING
     list_top = int((VIDEO_SIZE[1] - list_total_height) / 2) + LIST_VERTICAL_OFFSET
@@ -336,7 +363,7 @@ def main():
         align="center",
     )
     title_h = title_arr.shape[0]
-    title_y = list_top - title_h - 60  # 60px gap above list (tweakable)
+    title_y = list_top - title_h - GAP
 
     title_clip = rgba_to_imageclip(
         title_arr,
@@ -349,7 +376,7 @@ def main():
     bar_x = SAFE_LEFT
     cover_x = bar_x + PROGRESS_BAR_WIDTH + BAR_TO_COVER_GAP
     text_x = cover_x + ROW_COVER_SIZE + COVER_TO_TEXT_GAP
-    text_max_width = 480  # width for text block
+    text_max_width = VIDEO_SIZE[0] - text_x - SAFE_LEFT
 
     # Vertical progress bar, left of the list, aligned with list rows
     progress_bar_clip = make_vertical_progress_bar_clip(
@@ -396,11 +423,15 @@ def main():
 
         row_y = list_top + idx * (ROW_COVER_SIZE + ROW_SPACING)
 
-        # Reveal time: when this track's audio segment starts
+        # Reveal time: add a small global delay so at t=0 we only see placeholders
         reveal_time = idx * per_segment_sec
-        visible_duration = total_duration - reveal_time
+        # Clamp just in case
+        if reveal_time > total_duration:
+            reveal_time = total_duration
 
-        # Placeholder cover from t=0 until reveal_time (if reveal_time > 0)
+        visible_duration = max(0.0, total_duration - reveal_time)
+
+        # Placeholder cover from t=0 until reveal_time (for EVERY track)
         if reveal_time > 0:
             placeholder_clip = rgba_to_imageclip(
                 placeholder_arr,
@@ -411,25 +442,32 @@ def main():
             row_clips.append(placeholder_clip)
 
         # Real cover from reveal_time to end
-        cover_clip = (
-            ImageClip(cover_arr)
-            .set_duration(visible_duration)
-            .set_start(reveal_time)
-            .set_position((cover_x, row_y))
-        )
+        if visible_duration > 0:
+            cover_clip = (
+                ImageClip(cover_arr)
+                .set_duration(visible_duration)
+                .set_start(reveal_time)
+                .set_position((cover_x, row_y))
+            )
 
-        # Text clip (transparent, appears at reveal_time)
-        text_clip = rgba_to_imageclip(
-            text_arr,
-            duration=visible_duration,
-            start=reveal_time,
-            position=(text_x, row_y - 6),
-        )
+            # Text clip (transparent, appears at reveal_time)
 
-        row_clips.extend([cover_clip, text_clip])
+            # --- vertical centering of text next to cover ---
+            text_h = text_arr.shape[0]
+            # cover height = ROW_COVER_SIZE, cover Y = row_y
+            text_y = row_y + (ROW_COVER_SIZE // 2) - (text_h // 2) - LIST_FONT_SIZE // 4
+
+            text_clip = rgba_to_imageclip(
+                text_arr,
+                duration=visible_duration,
+                start=reveal_time,
+                position=(text_x, text_y),
+            )
+
+            row_clips.extend([cover_clip, text_clip])
     
      # --- Bottom caption: "Next dose tomorrow" ---
-    bottom_label = "NEXT DOSE TOMORROW"
+    bottom_label = "MORE TRACKS TOMORROW"
 
     bottom_arr = create_text_image(
         bottom_label,
@@ -439,7 +477,7 @@ def main():
     )
 
     bottom_h = bottom_arr.shape[0]
-    bottom_y = list_top + list_total_height + 60  # 60px below the list
+    bottom_y = list_top + list_total_height + GAP
 
     bottom_clip = rgba_to_imageclip(
         bottom_arr,
@@ -458,7 +496,7 @@ def main():
     audio_clip = AudioFileClip(audio_path)
     final_video = final_video.set_audio(audio_clip)
 
-    out_video_path = os.path.join(folder, "combined_best15_list_1080x1920.mp4")
+    out_video_path = os.path.join(folder, "reel.mp4")
     final_video.write_videofile(
         out_video_path,
         fps=30,
