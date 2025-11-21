@@ -35,7 +35,7 @@ def main():
     # Steps in order
     run_step("analyze_tracks.py", folder)
     run_step("build_audio.py", folder)
-    run_step("build_video_list.py", folder)
+    run_step("build_video_carousel.py", folder)
     run_step("cleanup.py", folder)
     run_step("build_description.py", folder)
 
