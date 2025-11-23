@@ -28,7 +28,7 @@ TEXT_LINE_STAGGER = 0.1      # opóźnienie między liniami tekstu (druga vs pie
 
 # --- LAYOUT ---
 CENTER_COVER_SIZE = 640      # bazowy rozmiar okładki w centrum (px)
-COVER_Y = 620                # pionowa pozycja środka okładki
+COVER_Y = VIDEO_SIZE[1] // 2 
 
 # Odległości od okładki w górę
 GAP_INDEX_TO_COVER = 40      # od środka tekstu "Track X / N" do górnej krawędzi okładki
@@ -36,7 +36,7 @@ GAP_TITLE_TO_INDEX = 32      # odstęp między folder name a Track X / N
 
 # Okładki: pozycje środków (x) dla lewa / środek / prawa
 CENTER_X = VIDEO_SIZE[0] // 2
-COVER_OFFSET_X = 1080         # odległość lewa/prawa okładka od środka
+COVER_OFFSET_X = 540         # odległość lewa/prawa okładka od środka
 
 # Teksty pod okładką
 TEXT_LINE_SPACING = 80        # odstęp między liniami tekstu
