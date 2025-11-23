@@ -23,24 +23,23 @@ VIDEO_SIZE = (1080, 1920)  # (width, height)
 # --- ANIM CONSTANTS ---
 COVER_TRANSITION = 0.6       # sekundy: czas animacji przesunięcia okładek między segmentami
 COVER_PREVIEW_SCALE = 0.8    # skala okładki w podglądzie (lewa/prawa)
-TEXT_SLIDE_DURATION = 0.4    # jak długo linia tekstu „wjeżdża” z prawej
+TEXT_SLIDE_DURATION = 0.3    # jak długo linia tekstu „wjeżdża” z prawej
 TEXT_LINE_STAGGER = 0.1      # opóźnienie między liniami tekstu (druga vs pierwsza itd.)
 
 # --- LAYOUT ---
 CENTER_COVER_SIZE = 640      # bazowy rozmiar okładki w centrum (px)
-COVER_Y = VIDEO_SIZE[1] // 2 
+COVER_Y = VIDEO_SIZE[1] // 2  # środek ekranu w pionie
 
 # Odległości od okładki w górę
-GAP_INDEX_TO_COVER = 40      # od środka tekstu "Track X / N" do górnej krawędzi okładki
+GAP_INDEX_TO_COVER = 40      # gap między BOTTOM track-index a TOP okładki
 GAP_TITLE_TO_INDEX = 32      # odstęp między folder name a Track X / N
 
 # Okładki: pozycje środków (x) dla lewa / środek / prawa
 CENTER_X = VIDEO_SIZE[0] // 2
-COVER_OFFSET_X = 540         # odległość lewa/prawa okładka od środka
+COVER_OFFSET_X = 640         # odległość lewa/prawa okładka od środka
 
 # Teksty pod okładką
-TEXT_LINE_SPACING = 80        # odstęp między liniami tekstu
-# Y tekstu policzymy od okładki w main()
+TEXT_LINE_SPACING = 80       # odstęp między liniami tekstu
 
 # FONTY
 TITLE_FONT_SIZE = 80          # folder name
@@ -100,7 +99,6 @@ def create_text_image(label_text: str,
     Renderuje tekst (biały + cień) jako RGBA (bez tła).
     """
     font = load_font(font_size)
-    # najpierw duży dummy, potem przycinamy
     dummy = Image.new("RGBA", (2000, 400), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
 
@@ -176,21 +174,33 @@ def role_in_segment(track_idx: int, seg_idx: int, num_tracks: int) -> str:
     return "hidden"
 
 
-def role_to_pos_scale(role: str, base_size: int):
+def role_to_pos_scale_context(role: str,
+                              base_size: int,
+                              prev_role_for_hidden: str):
     """
     Zwraca ((cx, cy), scale) dla danej roli.
-    Uwaga: hidden trzymamy poza ekranem po PRAWEJ, ale na tej samej wysokości,
-    żeby nowa okładka wjeżdżała poziomo (nie z góry/lewej).
+    Dla 'hidden' bierzemy pod uwagę poprzednią rolę:
+    - jeśli schodzi z lewej, chowa się poza lewą krawędzią
+    - w innych przypadkach poza prawą.
     """
+    if role == "hidden":
+        if prev_role_for_hidden == "left":
+            # schowaj poza lewą
+            off_x = CENTER_X - COVER_OFFSET_X - base_size * 1.5
+        else:
+            # schowaj poza prawą
+            off_x = CENTER_X + COVER_OFFSET_X + base_size * 1.5
+        return (off_x, COVER_Y), COVER_PREVIEW_SCALE
+
     if role == "center":
         return (CENTER_X, COVER_Y), 1.0
-    elif role == "left":
+    if role == "left":
         return (CENTER_X - COVER_OFFSET_X, COVER_Y), COVER_PREVIEW_SCALE
-    elif role == "right":
+    if role == "right":
         return (CENTER_X + COVER_OFFSET_X, COVER_Y), COVER_PREVIEW_SCALE
-    else:  # hidden -> poza ekranem na prawo, ale w tej samej wysokości
-        off_x = CENTER_X + COVER_OFFSET_X + base_size * 1.5
-        return (off_x, COVER_Y), COVER_PREVIEW_SCALE
+
+    # fallback
+    return (CENTER_X, COVER_Y), COVER_PREVIEW_SCALE
 
 
 def make_cover_clip(track_idx: int,
@@ -227,8 +237,8 @@ def make_cover_clip(track_idx: int,
 
     def scale_fn(t: float):
         prev_role, curr_role, p = role_and_progress(t)
-        (_, _), s1 = role_to_pos_scale(prev_role, base_size)
-        (_, _), s2 = role_to_pos_scale(curr_role, base_size)
+        (_, _), s1 = role_to_pos_scale_context(prev_role, base_size, prev_role)
+        (_, _), s2 = role_to_pos_scale_context(curr_role, base_size, prev_role)
         return s1 + (s2 - s1) * p
 
     def pos_center_fn(t: float):
@@ -236,8 +246,8 @@ def make_cover_clip(track_idx: int,
         Zwraca (cx, cy) – środek okładki dla danego czasu.
         """
         prev_role, curr_role, p = role_and_progress(t)
-        (cx1, cy1), s1 = role_to_pos_scale(prev_role, base_size)
-        (cx2, cy2), s2 = role_to_pos_scale(curr_role, base_size)
+        (cx1, cy1), _ = role_to_pos_scale_context(prev_role, base_size, prev_role)
+        (cx2, cy2), _ = role_to_pos_scale_context(curr_role, base_size, prev_role)
         cx = cx1 + (cx2 - cx1) * p
         cy = cy1 + (cy2 - cy1) * p
         return cx, cy
@@ -245,8 +255,7 @@ def make_cover_clip(track_idx: int,
     base_clip = ImageClip(cover_arr).set_duration(total_duration)
 
     def fl(gf, t):
-        # gf(t) to oryginalna klatka (t i tak nie ma znaczenia, cover stały)
-        frame = gf(0)  # (H, W, 3)
+        frame = gf(0)  # (H, W, 3) – cover statyczny
         scale = scale_fn(t)
         img = Image.fromarray(frame)
         new_w = max(1, int(frame.shape[1] * scale))
@@ -256,8 +265,6 @@ def make_cover_clip(track_idx: int,
 
     resized_clip = base_clip.fl(fl, apply_to=[])
 
-    # pozycjonowanie – MoviePy będzie ustawiał lewy górny róg,
-    # więc przeliczamy środek -> lewy_górny
     def pos_topleft_fn(t):
         cx, cy = pos_center_fn(t)
         scale = scale_fn(t)
@@ -278,50 +285,52 @@ def make_text_line_clip(text_arr: np.ndarray,
     """
     Pojedyncza linia tekstu (artist / title / album) dla danego tracka:
     - start: na początku segmentu + stagger (0, 0.1, 0.2...)
-    - wjeżdża z prawej na środek
+    - wjeżdża z DOŁU na swoją docelową pozycję
     - znika po końcu segmentu (wyrzucona poza ekran w lewo)
     """
     line_start = seg_index * seg_duration + line_index * TEXT_LINE_STAGGER
     line_end = (seg_index + 1) * seg_duration
 
-    # docelowe X: centralnie pod okładką
     text_w = text_arr.shape[1]
+    text_h = text_arr.shape[0]
+
+    # docelowa pozycja X/Y
     final_x = CENTER_X - text_w / 2
-    # start X: poza ekranem po prawej
-    start_x = VIDEO_SIZE[0] + 50
-    # po zakończeniu segmentu – poza ekranem po lewej
+    final_y = base_y + line_index * TEXT_LINE_SPACING
+
+    # start z dołu ekranu
+    start_y = VIDEO_SIZE[1] + 50
+
+    # po zakończeniu segmentu – wyrzuć w lewo (jak wcześniej)
     off_left_x = -text_w - 200
 
-    # Y: bazowy + index * spacing
-    y = base_y + line_index * TEXT_LINE_SPACING
-
     def pos_fn(t: float):
-        # t jest globalne
         if t < line_start:
-            # jeszcze przed startem – trzymaj poza ekranem z prawej
-            return (start_x, y)
+            # jeszcze przed startem – trzymaj pod ekranem
+            return (final_x, start_y)
         if t >= line_end:
             # po końcu segmentu – wyrzuć poza ekran w lewo
-            return (off_left_x, y)
+            return (off_left_x, final_y)
 
         local = t - line_start
         if local >= TEXT_SLIDE_DURATION:
             # po zakończeniu animacji – na docelowej pozycji
-            return (final_x, y)
+            return (final_x, final_y)
 
+        # animacja: z dołu w górę
         p = max(0.0, min(1.0, local / TEXT_SLIDE_DURATION))
-        x = start_x + (final_x - start_x) * p
-        return (x, y)
+        y = start_y + (final_y - start_y) * p
+        return (final_x, y)
 
-    # pełny czas trwania, pozycja sterowana funkcją
     clip = rgba_to_imageclip(
         text_arr,
         duration=total_duration,
         start=0,
-        position=(0, 0),  # nadpiszemy funkcją
+        position=(0, 0),
     )
     clip = clip.set_position(pos_fn)
     return clip
+
 
 
 # ---------- Main ----------
@@ -379,13 +388,19 @@ def main():
     cover_top = COVER_Y - CENTER_COVER_SIZE // 2
 
     # Folder name (top), Track index nad okładką z GAPami
+
+    # 1) Folder name obraz
     folder_arr = create_text_image(folder_title.upper(), TITLE_FONT_SIZE)
     folder_h = folder_arr.shape[0]
 
-    # Track index Y – stały GAP nad górą okładki
-    idx_y = cover_top - GAP_INDEX_TO_COVER
+    # 2) Szablon do obliczenia wysokości track index (żeby nie wchodził w okładkę)
+    idx_template_arr = create_text_image(f"Track 1 / {num_tracks}", TRACK_INDEX_FONT_SIZE)
+    idx_h = idx_template_arr.shape[0]
 
-    # Folder name Y – GAP nad track index
+    # Track index Y: tak, żeby BOTTOM indeksu był GAP_INDEX_TO_COVER nad górą okładki
+    idx_y = cover_top - GAP_INDEX_TO_COVER - idx_h
+
+    # Folder name Y: GAP_TITLE_TO_INDEX nad TOP indeksu
     folder_y = idx_y - GAP_TITLE_TO_INDEX - folder_h
 
     folder_clip = rgba_to_imageclip(
@@ -466,7 +481,13 @@ def main():
 
     # Składamy wszystko
     final_video = CompositeVideoClip(
-        [bg_full, folder_clip, *track_index_clips, *cover_clips, *text_clips],
+        [
+            bg_full,
+            folder_clip,
+            *track_index_clips,
+            *cover_clips,
+            *text_clips,
+        ],
         size=VIDEO_SIZE,
     ).set_duration(total_duration)
 
