@@ -28,7 +28,7 @@ TEXT_LINE_STAGGER = 0.1      # opóźnienie między liniami tekstu (druga vs pie
 
 # --- LAYOUT ---
 CENTER_COVER_SIZE = 640      # bazowy rozmiar okładki w centrum (px)
-COVER_Y = VIDEO_SIZE[1] // 2  # środek ekranu w pionie
+COVER_Y = VIDEO_SIZE[1] // 2.2  # środek ekranu w pionie
 
 # Odległości od okładki w górę
 GAP_INDEX_TO_COVER = 40      # gap między BOTTOM track-index a TOP okładki

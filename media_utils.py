@@ -12,7 +12,7 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC, ID3NoHeaderError
 
 SUPPORTED_EXT = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
-TOTAL_TARGET_SEC = 12.0
+TOTAL_TARGET_SEC = 18.0
 
 
 # ---------- AUDIO ANALYSIS (SAFE) ----------
@@ -187,3 +187,167 @@ def make_square_cover_array(img: Image.Image, size: int = 800) -> np.ndarray:
 def placeholder_cover_array(size: int = 800) -> np.ndarray:
     img = Image.new("RGB", (size, size), color=(30, 30, 30))
     return np.array(img)
+
+# -- DROP DETECTED --
+
+def _smooth(x: np.ndarray, win: int) -> np.ndarray:
+    if win <= 1:
+        return x
+    kernel = np.ones(win) / win
+    return np.convolve(x, kernel, mode="same")
+
+
+def _zscore(x: np.ndarray) -> np.ndarray:
+    m = np.mean(x)
+    s = np.std(x) + 1e-9
+    return (x - m) / s
+
+
+def detect_main_drop_time(
+    path: str,
+    frame_length: int = 4096,
+    hop_length: int = 1024,
+    smooth_rms_win: int = 6,
+    smooth_flux_win: int = 4,
+    score_z_thresh: float = 1.8,
+    min_intro_sec: float = 15.0,
+    min_time_between_drops_sec: float = 6.0,
+    min_break_sec: float = 2.0,
+    pre_window_sec: float = 8.0,
+) -> float | None:
+    """
+    Zwraca czas (w sekundach) głównego dropu w utworze albo None,
+    jeśli nic sensownego nie udało się znaleźć.
+    """
+    # 1. Audio
+    y, sr = librosa.load(path, sr=None, mono=True)
+    duration = librosa.get_duration(y=y, sr=sr)
+
+    # 2. RMS
+    rms = librosa.feature.rms(
+        y=y,
+        frame_length=frame_length,
+        hop_length=hop_length,
+    )[0]
+    rms_smooth = _smooth(rms, smooth_rms_win)
+
+    # 3. Spectral flux (zmiana widma)
+    S = librosa.stft(y, n_fft=2048, hop_length=hop_length)
+    mag = np.abs(S)
+    flux = np.sqrt(np.sum(np.diff(mag, axis=1).clip(min=0) ** 2, axis=0))
+    flux = np.concatenate([[flux[0]], flux])
+    flux_smooth = _smooth(flux, smooth_flux_win)
+
+    # 4. Wyrównanie długości
+    L = min(len(rms_smooth), len(flux_smooth))
+    rms_smooth = rms_smooth[:L]
+    flux_smooth = flux_smooth[:L]
+
+    # 5. Skoki RMS + poziom flux
+    rms_diff = np.diff(rms_smooth, prepend=rms_smooth[0])
+    rms_diff_z = _zscore(rms_diff)
+    flux_z = _zscore(flux_smooth)
+
+    score = rms_diff_z + flux_z
+
+    frames = np.arange(L)
+    times = librosa.frames_to_time(frames, sr=sr, hop_length=hop_length)
+
+    # 6. Kandydaci
+    raw_idxs = np.where(score > score_z_thresh)[0]
+    if len(raw_idxs) == 0:
+        return None
+
+    min_break_frames = int(min_break_sec * sr / hop_length)
+    pre_window_frames = int(pre_window_sec * sr / hop_length)
+    min_time_between_frames = int(min_time_between_drops_sec * sr / hop_length)
+
+    median_rms = np.median(rms_smooth)
+    low_energy_threshold = 0.9 * median_rms
+
+    candidate_times: list[float] = []
+    candidate_scores: list[float] = []
+    last_drop_frame = -10**9
+
+    for idx in raw_idxs:
+        t = times[idx]
+        if t < min_intro_sec:
+            continue
+
+        if idx - last_drop_frame < min_time_between_frames:
+            continue
+
+        start_pre = max(0, idx - pre_window_frames)
+        end_pre_break = max(0, idx - min_break_frames)
+        if end_pre_break <= start_pre:
+            continue
+
+        pre_window = rms_smooth[start_pre:idx]
+        pre_break = rms_smooth[start_pre:end_pre_break]
+        if len(pre_window) < 4 or len(pre_break) < 4:
+            continue
+
+        mean_pre = np.mean(pre_window)
+        mean_break = np.mean(pre_break)
+
+        if mean_break < low_energy_threshold and mean_pre > mean_break * 1.15:
+            candidate_times.append(t)
+            candidate_scores.append(score[idx])
+            last_drop_frame = idx
+
+    # 7. Wybór głównego dropu
+    if candidate_times:
+        best_idx = int(np.argmax(candidate_scores))
+        return float(candidate_times[best_idx])
+
+    # 8. Fallback – jak nie spełniły się warunki breaku,
+    # bierzemy globalne maksimum score (poza intrem)
+    valid_mask = times >= min_intro_sec
+    if not np.any(valid_mask):
+        return None
+
+    idxs_valid = np.where(valid_mask)[0]
+    best_idx = idxs_valid[np.argmax(score[idxs_valid])]
+    t_best = float(times[best_idx])
+
+    # jak drop jest praktycznie na samym końcu, to też słabo
+    if duration - t_best < 5.0:
+        return None
+
+    return t_best
+
+
+def find_drop_centered_segment(
+    filepath: str,
+    target_sec: float,
+    ignore_sec: float = 10.0,
+) -> float:
+    """
+    Zwraca start wycinka tak, żeby główny drop (jeśli wykryty)
+    był w jego okolicach środka. Jeśli dropu nie ma, fallback
+    do find_best_segment.
+    """
+    try:
+        drop_time = detect_main_drop_time(filepath)
+    except Exception:
+        drop_time = None
+
+    if drop_time is None:
+        # stara logika jako backup
+        return find_best_segment(filepath, target_sec=target_sec, ignore_sec=ignore_sec)
+
+    # długość utworu
+    duration = librosa.get_duration(path=filepath)
+
+    # drop w środku wycinka
+    start = drop_time - target_sec / 1.5
+
+    # nie wchodźmy w ignorowane intro
+    start = max(start, ignore_sec)
+
+    # nie wychodźmy poza koniec utworu
+    if start + target_sec > duration:
+        start = max(ignore_sec, duration - target_sec)
+
+    # i na wszelki wypadek >= 0
+    return float(max(0.0, start))

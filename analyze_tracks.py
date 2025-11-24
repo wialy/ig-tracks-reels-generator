@@ -11,7 +11,7 @@ from media_utils import (
     SUPPORTED_EXT,
     TOTAL_TARGET_SEC,
     extract_metadata_and_cover,
-    find_best_segment,
+    find_drop_centered_segment,
     make_square_cover_array,
     placeholder_cover_array,
 )
@@ -91,12 +91,12 @@ def main():
         print(f"  Cover saved to: {cover_path}")
 
         # 2) Best segment start
-        start_sec = find_best_segment(
+        start_sec = find_drop_centered_segment(
             filepath,
             target_sec=per_segment_sec,
-            ignore_sec=10.0
+            ignore_sec=10.0,
         )
-        print(f"  Best segment start: {start_sec:.2f}s")
+        print(f"  Segment (drop-centered) start: {start_sec:.2f}s")
 
         track_entry = {
             "file_path": filepath,
