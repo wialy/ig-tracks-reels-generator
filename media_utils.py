@@ -9,10 +9,13 @@ from pydub import AudioSegment
 import librosa
 
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+from mutagen.id3 import ID3, APIC, ID3NoHeaderError, TPUB, TXXX
+
+# ---- DODAJEMY MAPOWANIE publisher → TPUB ----
+EasyID3.RegisterTextKey("publisher", "TPUB")
 
 SUPPORTED_EXT = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
-TOTAL_TARGET_SEC = 18.0
+TOTAL_TARGET_SEC = 9.0
 
 
 # ---------- AUDIO ANALYSIS (SAFE) ----------
@@ -113,19 +116,20 @@ def extract_metadata_and_cover(filepath: str):
       - artist (str)
       - title (str)
       - album (Optional[str])
-      - year (Optional[str])
+      - year  (Optional[str])
+      - label (Optional[str])   ← NEW
       - cover_image (PIL.Image RGB or None)
-
-    Uses only ID3 / EasyID3, no audio parsing.
     """
+
     basename = os.path.splitext(os.path.basename(filepath))[0]
     artist = "Unknown Artist"
     title = basename
     album = None
     year = None
+    label = None
     cover_image = None
 
-    # EasyID3 (text tags)
+    # --- TEXT TAGS (EasyID3) ---
     try:
         tags = EasyID3(filepath)
 
@@ -138,7 +142,11 @@ def extract_metadata_and_cover(filepath: str):
         if "album" in tags and tags["album"]:
             album = tags["album"][0]
 
-        # Try to resolve year
+        # --- TRY TO READ LABEL VIA EasyID3 ---
+        if "publisher" in tags and tags["publisher"]:
+            label = tags["publisher"][0]
+
+        # Year
         for key in ("date", "originaldate", "year"):
             if key in tags and tags[key]:
                 raw = tags[key][0]
@@ -150,20 +158,40 @@ def extract_metadata_and_cover(filepath: str):
     except Exception as e:
         print(f"  [WARN] Could not read EasyID3 tags for {basename}: {e}")
 
-    # ID3 for cover art (APIC)
+    # --- ID3 FOR COVER + FALLBACK LABEL ---
     try:
         id3 = ID3(filepath)
+
+        # COVER
         apic_frames = [f for f in id3.values() if isinstance(f, APIC)]
         if apic_frames:
-            apic = apic_frames[0]
-            img_data = apic.data
+            img_data = apic_frames[0].data
             cover_image = Image.open(BytesIO(img_data)).convert("RGB")
-    except ID3NoHeaderError:
-        print(f"  [INFO] No ID3 header in {basename} (no cover art).")
-    except Exception as e:
-        print(f"  [WARN] Could not read cover art for {basename}: {e}")
 
-    return artist, title, album, year, cover_image
+        # LABEL FALLBACK: check TPUB, TPB and TXXX fields
+        if label is None:
+            # TPUB (most standard)
+            if "TPUB" in id3:
+                label = str(id3["TPUB"].text[0])
+
+            # TPB (ID3v2.2 variant)
+            elif "TPB" in id3:
+                label = str(id3["TPB"].text[0])
+
+            # TXXX custom tags
+            else:
+                for frame in id3.getall("TXXX"):
+                    desc = frame.desc.lower()
+                    if "label" in desc or "publisher" in desc:
+                        label = frame.text[0]
+                        break
+
+    except ID3NoHeaderError:
+        print(f"  [INFO] No ID3 header in {basename} (no tags / cover).")
+    except Exception as e:
+        print(f"  [WARN] Could not read ID3 tags for {basename}: {e}")
+
+    return artist, title, album, year, label, cover_image
 
 
 def make_square_cover_array(img: Image.Image, size: int = 800) -> np.ndarray:
@@ -340,7 +368,7 @@ def find_drop_centered_segment(
     duration = librosa.get_duration(path=filepath)
 
     # drop w środku wycinka
-    start = drop_time - target_sec / 1.5
+    start = drop_time - target_sec * 0.75
 
     # nie wchodźmy w ignorowane intro
     start = max(start, ignore_sec)

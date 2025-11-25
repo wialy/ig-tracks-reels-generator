@@ -58,7 +58,7 @@ You can run each step separately:
   ```
 
 ## Output
-- `combined_best15_1080x1920`:Final vertical video for sharing
+- `_audio_1080x1920`:Final vertical video for sharing
 
 ## Customization
 - Edit font sizes, layout, and video size in `build_video.py`

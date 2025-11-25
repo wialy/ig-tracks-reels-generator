@@ -31,6 +31,7 @@ def main():
     lines = ["I dig through tracks so you don't have to.", ""]
 
     # Bullet list of tracks: "- Artist - Title"
+    # (Usually this will be one track per reel, but we keep support for multiple.)
     for t in tracks:
         artist = t.get("artist", "").strip() or "Unknown Artist"
         title = t.get("title", "").strip() or "Untitled"
@@ -38,14 +39,17 @@ def main():
 
     lines.append("")  # blank line
 
-    # Static description
+    # Updated SEO-friendly static description
     tail = dedent(
         """\
-        Daily Drops is my daily reel series for anyone into electronic music. Every day, I share quick clips from three fresh tracks—house, techno, ambient, breaks, anything that stands out. It’s an easy way to discover new electronic music without spending hours digging for it.
+        Daily Drops is my daily reel series showcasing one standout electronic track per day, focused on the most impactful moment — the drop.
+        I dig through new releases and hidden gems across house, techno, melodic, minimal, breaks, ambient and more to highlight tracks worth your attention.
 
-        If you’re a DJ, producer, or just someone who likes staying on top of new releases, Daily Drops keeps your feed filled with new ideas and new artists. One reel a day, three new tracks to check out.
+        Whether you're a DJ looking for fresh tracks, a producer searching for inspiration, or just someone who loves discovering new electronic music, these short clips make it easy to stay updated without spending hours digging.
 
-        #dailydrops
+        Follow for daily underground finds, new releases and festival-ready drops — one reel a day, one new track to check out.
+
+        #dailydrops 
         """
     )
 

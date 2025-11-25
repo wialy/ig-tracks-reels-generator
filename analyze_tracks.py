@@ -31,7 +31,7 @@ def main():
     files = [
         os.path.join(folder, f)
         for f in sorted(os.listdir(folder))
-        if f.lower().endswith(SUPPORTED_EXT)
+        if f.lower().endswith(SUPPORTED_EXT) and not f.lower().startswith('_')
     ]
 
     if not files:
@@ -69,7 +69,7 @@ def main():
         print(f"\nAnalyzing: {basename}")
 
         # 1) Metadata & cover
-        artist, title, album, year, cover_img = extract_metadata_and_cover(filepath)
+        artist, title, album, year, label, cover_img = extract_metadata_and_cover(filepath)
 
         if cover_img is None:
             cover_arr = placeholder_cover_array(size=800)
@@ -107,6 +107,7 @@ def main():
             "cover_path": cover_path,
             "segment_start_sec": start_sec,
             "segment_duration_sec": per_segment_sec,
+            "label": label,
         }
         result.append(track_entry)
 

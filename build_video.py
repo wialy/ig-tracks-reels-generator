@@ -225,7 +225,7 @@ def main():
     folder = sys.argv[1]
 
     analysis_path = os.path.join(folder, "analysis.json")
-    audio_path = os.path.join(folder, "combined_best15.mp3")
+    audio_path = os.path.join(folder, "_audio.mp3")
 
     if not os.path.isfile(analysis_path):
         print(f"Error: {analysis_path} not found. Run analyze_tracks.py first.")
@@ -391,7 +391,7 @@ def main():
     audio_clip = AudioFileClip(audio_path)
     final_video = final_video.set_audio(audio_clip)
 
-    out_video_path = os.path.join(folder, "combined_best15_1080x1920.mp4")
+    out_video_path = os.path.join(folder, "_audio_1080x1920.mp4")
     final_video.write_videofile(
         out_video_path,
         fps=30,

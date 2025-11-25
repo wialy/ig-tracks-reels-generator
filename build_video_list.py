@@ -303,7 +303,7 @@ def main():
     folder = sys.argv[1]
 
     analysis_path = os.path.join(folder, "analysis.json")
-    audio_path = os.path.join(folder, "combined_best15.mp3")
+    audio_path = os.path.join(folder, "_audio.mp3")
 
     if not os.path.isfile(analysis_path):
         print(f"Error: {analysis_path} not found. Run analyze_tracks.py first.")

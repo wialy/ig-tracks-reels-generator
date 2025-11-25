@@ -9,7 +9,7 @@ def main():
         sys.exit(1)
 
     folder = sys.argv[1]
-    mp3_path = os.path.join(folder, "combined_best15.mp3")
+    mp3_path = os.path.join(folder, "_audio.mp3")
 
     if os.path.isfile(mp3_path):
         os.remove(mp3_path)

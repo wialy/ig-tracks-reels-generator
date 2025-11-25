@@ -21,7 +21,7 @@ from media_utils import TOTAL_TARGET_SEC
 VIDEO_SIZE = (1080, 1920)  # (width, height)
 
 # --- ANIM CONSTANTS ---
-COVER_TRANSITION = 0.6       # sekundy: czas animacji przesunięcia okładek między segmentami
+COVER_TRANSITION = 0.3       # sekundy: czas animacji przesunięcia okładek między segmentami
 COVER_PREVIEW_SCALE = 0.8    # skala okładki w podglądzie (lewa/prawa)
 TEXT_SLIDE_DURATION = 0.3    # jak długo linia tekstu „wjeżdża” z prawej
 TEXT_LINE_STAGGER = 0.1      # opóźnienie między liniami tekstu (druga vs pierwsza itd.)
@@ -32,21 +32,22 @@ COVER_Y = VIDEO_SIZE[1] // 2.2  # środek ekranu w pionie
 
 # Odległości od okładki w górę
 GAP_INDEX_TO_COVER = 40      # gap między BOTTOM track-index a TOP okładki
-GAP_TITLE_TO_INDEX = 32      # odstęp między folder name a Track X / N
+GAP_TITLE_TO_INDEX = 0      # odstęp między folder name a Track X / N
 
 # Okładki: pozycje środków (x) dla lewa / środek / prawa
 CENTER_X = VIDEO_SIZE[0] // 2
 COVER_OFFSET_X = 640         # odległość lewa/prawa okładka od środka
 
 # Teksty pod okładką
-TEXT_LINE_SPACING = 80       # odstęp między liniami tekstu
+TEXT_LINE_SPACING = 58       # odstęp między liniami tekstu
 
 # FONTY
-TITLE_FONT_SIZE = 80          # folder name
-TRACK_INDEX_FONT_SIZE = 60    # "Track 1 / 3"
-TEXT_FONT_SIZE = 70           # linie pod okładką
+TITLE_FONT_SIZE = 64          # folder name
+TRACK_INDEX_FONT_SIZE = 42    # "Track 1 / 3"
+TEXT_FONT_SIZE = 36           # linie pod okładką
 
 FONT_CANDIDATES = [
+    "./Instagram Sans Bold.ttf",
     "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
 ]
@@ -99,7 +100,7 @@ def create_text_image(label_text: str,
     Renderuje tekst (biały + cień) jako RGBA (bez tła).
     """
     font = load_font(font_size)
-    dummy = Image.new("RGBA", (2000, 400), (0, 0, 0, 0))
+    dummy = Image.new("RGBA", (2000, 600), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
 
     bbox = draw.textbbox((0, 0), label_text, font=font)
@@ -108,12 +109,12 @@ def create_text_image(label_text: str,
     text_h = y1 - y0
 
     pad_x = 20
-    pad_y = 10
+    pad_y = font_size // 4
 
     img_w = text_w + 2 * pad_x
-    img_h = text_h + 2 * pad_y
+    img_h = text_h + 4 * pad_y
 
-    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 255))
     draw = ImageDraw.Draw(img)
 
     x_text = pad_x
@@ -343,7 +344,7 @@ def main():
     folder = sys.argv[1]
 
     analysis_path = os.path.join(folder, "analysis.json")
-    audio_path = os.path.join(folder, "combined_best15.mp3")
+    audio_path = os.path.join(folder, "_audio.mp3")
 
     if not os.path.isfile(analysis_path):
         print(f"Error: {analysis_path} not found. Run analyze_tracks.py first.")
@@ -452,7 +453,7 @@ def main():
 
     # Text (artist / title / album (year)) – osobny zestaw linii dla każdego tracka
     text_clips = []
-    base_text_y = COVER_Y + CENTER_COVER_SIZE // 2 + 80  # pod okładką
+    base_text_y = COVER_Y + CENTER_COVER_SIZE // 2 + TEXT_FONT_SIZE 
 
     for i, t in enumerate(tracks):
         artist = t["artist"]
@@ -495,7 +496,7 @@ def main():
     audio_clip = AudioFileClip(audio_path)
     final_video = final_video.set_audio(audio_clip)
 
-    out_video_path = os.path.join(folder, "reel_carousel.mp4")
+    out_video_path = os.path.join(folder, "_video_carousel.mp4")
     final_video.write_videofile(
         out_video_path,
         fps=30,

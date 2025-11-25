@@ -31,6 +31,7 @@ def main():
     print(f"Building combined audio from {len(tracks)} track(s).")
 
     segments = []
+
     for t in tracks:
         path = t["file_path"]
         basename = os.path.basename(path)
@@ -57,14 +58,14 @@ def main():
             clip = clip[:dur_ms]
 
         # fades (0.25s or <= 1/4 duration)
-        fade_ms = min(500, dur_ms // 4)
+        fade_ms = 0 # min(500, dur_ms // 4)
         if len(clip) > 2 * fade_ms and fade_ms > 0:
             clip = clip.fade_in(fade_ms).fade_out(fade_ms)
         elif fade_ms > 0 and len(clip) > 0:
             half = len(clip) // 2
             clip = clip.fade_in(half).fade_out(half)
 
-        segments.append(clip)
+    segments.append(clip)
 
     if not segments:
         print("No segments created.")
@@ -82,7 +83,7 @@ def main():
     elif len(combined) > target_ms:
         combined = combined[:target_ms]
 
-    out_path = os.path.join(folder, "combined_best15.mp3")
+    out_path = os.path.join(folder, "_audio.mp3")
     combined.export(out_path, format="mp3")
     print(f"\nCombined audio saved to: {out_path}")
 
