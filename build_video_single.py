@@ -48,11 +48,18 @@ COVER_TOP = INNER_TOP
 
 # tekst pod okładką
 TEXT_TOP_GAP = 16
-TEXT_FONT_SIZE = 28
+TEXT_FONT_SIZE = 32
 
 # waveform
-TEXT_TO_WAVEFORM_GAP = 32
-WAVEFORM_HEIGHT = CARD_BOTTOM - CARD_TOP - COVER_SIZE - TEXT_TOP_GAP - TEXT_TO_WAVEFORM_GAP * 3 - TEXT_FONT_SIZE * 3
+TEXT_TO_WAVEFORM_GAP = 64
+WAVEFORM_HEIGHT = (
+    CARD_BOTTOM
+    - CARD_TOP
+    - COVER_SIZE
+    - TEXT_TOP_GAP
+    - TEXT_TO_WAVEFORM_GAP * 3
+    - TEXT_FONT_SIZE * 3
+)
 
 # tytuł pionowy
 TITLE_FONT_SIZE = 32
@@ -63,11 +70,14 @@ WAVEFORM_NFFT = 2048
 WAVEFORM_HOP = 512
 
 FONT_CANDIDATES = [
-    './Instagram Sans Bold.ttf',
     './DoppioOne-Regular.ttf',
     "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
 ]
+
+# animacja tekstu
+TEXT_LINE_STAGGER = 0.4         # odstęp pomiędzy liniami
+TEXT_LINE_ANIM_DURATION = 0.4  # czas animacji pojedynczej linii (sekundy)
 
 
 # ---------- Helpers ----------
@@ -108,6 +118,7 @@ def create_text_image(label_text: str,
                       max_width: int | None = None) -> np.ndarray:
     """
     Szanuje istniejące '\n'. Jeśli max_width podany i nie ma '\n', robi prosty word-wrap.
+    Cień usunięty – sam tekst bez shadow.
     """
     font = load_font(font_size)
 
@@ -145,7 +156,7 @@ def create_text_image(label_text: str,
         )
         return np.array(img)
 
-    # --- max_width != None i already has '\n' -> użyj jak jest ---
+    # --- max_width != None i already has '\n' -> użyj jak jest, bez cienia ---
     if "\n" in label_text:
         text = label_text
         dummy = Image.new("RGBA", (max_width, 800), (0, 0, 0, 0))
@@ -169,15 +180,6 @@ def create_text_image(label_text: str,
             x_text = pad_x
         y_text = pad_y
 
-        shadow_offset = (2, 3)
-        draw.multiline_text(
-            (x_text + shadow_offset[0], y_text + shadow_offset[1]),
-            text,
-            font=font,
-            fill=(0, 0, 0, 200),
-            spacing=10,
-            align=align,
-        )
         draw.multiline_text(
             (x_text, y_text),
             text,
@@ -188,7 +190,7 @@ def create_text_image(label_text: str,
         )
         return np.array(img)
 
-    # --- max_width != None i brak '\n' -> word-wrap ---
+    # --- max_width != None i brak '\n' -> word-wrap, bez cienia ---
     words = label_text.split()
     lines = []
     current = ""
@@ -227,15 +229,6 @@ def create_text_image(label_text: str,
         x_text = pad_x
     y_text = pad_y
 
-    shadow_offset = (2, 3)
-    draw.multiline_text(
-        (x_text + shadow_offset[0], y_text + shadow_offset[1]),
-        text,
-        font=font,
-        fill=(0, 0, 0, 200),
-        spacing=10,
-        align=align,
-    )
     draw.multiline_text(
         (x_text, y_text),
         text,
@@ -244,6 +237,45 @@ def create_text_image(label_text: str,
         spacing=10,
         align=align,
     )
+    return np.array(img)
+
+
+def create_text_line_image(label_text: str,
+                           font_size: int,
+                           color: tuple[int, int, int],
+                           max_width: int) -> np.ndarray:
+    """
+    Jedna linia tekstu (bez '\n'), bez cienia, w zadanym kolorze.
+    Używana do 3 linii pod okładką, żeby mieć osobne kolory i klipy.
+    """
+    font = load_font(font_size)
+
+    dummy = Image.new("RGBA", (max_width, 400), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(dummy)
+
+    bbox = draw.textbbox((0, 0), label_text, font=font)
+    x0, y0, x1, y1 = bbox
+    text_w = x1 - x0
+    text_h = y1 - y0
+
+    pad_x = 20
+    pad_y = 8
+    img_w = min(max_width, text_w + 2 * pad_x)
+    img_h = text_h + 2 * pad_y
+
+    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    x_text = pad_x
+    y_text = pad_y
+
+    draw.text(
+        (x_text, y_text),
+        label_text,
+        font=font,
+        fill=(color[0], color[1], color[2], 255),
+    )
+
     return np.array(img)
 
 
@@ -473,11 +505,40 @@ def make_vertical_title_clip(folder_title: str, duration: float) -> ImageClip:
     img = Image.fromarray(arr).rotate(90, expand=True)
     arr_rot = np.array(img)
 
-    
     x = CARD_RIGHT - STRIPE_WIDTH * 1.1
     y = CARD_TOP
 
     return rgba_to_imageclip(arr_rot, duration=duration, start=0, position=(x, y))
+
+
+def make_line_position_fn(line_index: int,
+                          y_final: int,
+                          line_height: int):
+    """
+    Zwraca funkcję pozycji (x, y) dla linii tekstu:
+    - startuje poniżej docelowej pozycji,
+    - wjeżdża w górę w czasie TEXT_LINE_ANIM_DURATION,
+    - każda linia ma opóźnienie (stagger) TEXT_LINE_STAGGER * index.
+    """
+    def pos(t: float):
+        # lokalny czas tej linii (z uwzględnieniem staggera)
+        local_t = t - line_index * TEXT_LINE_STAGGER
+
+        if local_t <= 0:
+            # jeszcze przed startem animacji – schowana poniżej
+            y = y_final + line_height
+        elif local_t >= TEXT_LINE_ANIM_DURATION:
+            # po animacji – na miejscu
+            y = y_final
+        else:
+            # w trakcie animacji – liniowy slide-up
+            alpha = local_t / TEXT_LINE_ANIM_DURATION
+            # start: y_final + line_height, koniec: y_final
+            y = (y_final + line_height) - line_height * alpha
+
+        return (INNER_LEFT, int(y))
+
+    return pos
 
 
 # ---------- Main ----------
@@ -522,7 +583,7 @@ def main():
     title = t0["title"]
     album = t0.get("album")
     year = t0.get("year")
-    cover_path = t0["cover_path"]
+    cover_path = t0["vinyl_art"]
 
     audio_clip = AudioFileClip(audio_path)
     total_duration = min(TOTAL_TARGET_SEC, audio_clip.duration)
@@ -564,33 +625,92 @@ def main():
         .set_position((COVER_LEFT, COVER_TOP))
     )
 
-    # tekst pod okładką
+    # --- tekst pod okładką: osobne linie, kolory i animacja z dołu ---
+
     lines = [artist, title]
-    if album:
-        if year:
-            lines.append(f"{album} ({year})")
-        else:
-            lines.append(album)
-    text_label = "\n".join(lines)
+    if album and year:
+      lines.append(year)
+            # lines.append(f"{album} ({year})")
+        # else:
+            # lines.append(album)
 
-    text_arr = create_text_image(
-        text_label,
-        TEXT_FONT_SIZE,
-        align="left",
-        max_width=INNER_RIGHT - INNER_LEFT,
-    )
-    text_h = text_arr.shape[0]
     text_top = COVER_TOP + COVER_SIZE + TEXT_TOP_GAP
+    max_text_width = INNER_RIGHT - INNER_LEFT
 
-    text_clip = rgba_to_imageclip(
-        text_arr,
-        duration=total_duration,
-        start=0,
-        position=(INNER_LEFT, text_top),
-    )
+    line_clips = []
+    line_heights = []
+
+    for idx, line_text in enumerate(lines):
+        if idx == 0:
+            # 1. linia – pełna biel
+            color = (255, 255, 255)
+        else:
+            # 2. i 3. linia – trochę ciemniejsze
+            color = (196, 196, 196)
+        arr = create_text_line_image(
+            line_text,
+            TEXT_FONT_SIZE,
+            color,
+            max_width=max_text_width,
+        )
+        line_height = arr.shape[0]
+        line_heights.append(line_height)
+
+        clip = rgba_to_imageclip(
+            arr,
+            duration=total_duration,
+            start=0,
+            position=(INNER_LEFT, text_top),  # nadpiszemy funkcją pozycji niżej
+        )
+
+        line_clips.append(clip)
+
+    # finalne pozycje linii w "prostokącie"
+    LINE_GAP = 0
+    y_positions = []
+    current_y = text_top
+    for h in line_heights:
+        y_positions.append(current_y)
+        current_y += h + LINE_GAP
+
+    # nadpisujemy pozycje funkcjami animującymi wejście z dołu
+    for i, clip in enumerate(line_clips):
+        y_final = y_positions[i]
+        line_h = line_heights[i]
+        pos_fn = make_line_position_fn(i, y_final, TEXT_FONT_SIZE * 6)
+        line_clips[i] = clip.set_position(pos_fn)
+
+    # całkowita wysokość bloku tekstowego – do obliczenia waveform_top i maski
+    if line_heights:
+        text_block_height = (y_positions[-1] + line_heights[-1]) - text_top
+    else:
+        text_block_height = 0
+
+    # --- MASKA / CLIP PRZYCINANY ---
+    # Składamy wszystkie linie w jeden pełnoekranowy klip (przezroczyste tło),
+    # potem przycinamy prostokątem tak, żeby tekst "wchodził spod maski".
+    if line_clips:
+        text_block_clip_full = CompositeVideoClip(
+            line_clips,
+            size=VIDEO_SIZE,
+        ).set_duration(total_duration)
+
+        text_block_bottom = text_top + text_block_height
+
+        text_block_cropped = text_block_clip_full.crop(
+            x1=INNER_LEFT,
+            y1=text_top,
+            x2=INNER_RIGHT,
+            y2=text_block_bottom,
+        )
+
+        # Po cropie klip ma swój (0,0), więc ustawiamy go w miejscu prostokąta
+        text_block_cropped = text_block_cropped.set_position((INNER_LEFT, text_top))
+    else:
+        text_block_cropped = None
 
     # waveform w dolnej części karty
-    wave_top = text_top + text_h + TEXT_TO_WAVEFORM_GAP
+    wave_top = text_top + text_block_height + TEXT_TO_WAVEFORM_GAP
     wave_height = WAVEFORM_HEIGHT
     wave_left = INNER_LEFT
     wave_width = INNER_RIGHT - INNER_LEFT
@@ -598,7 +718,7 @@ def main():
     print("Computing waveform bands...")
     bands = compute_waveform_bands(audio_path, total_duration)
 
-    # szare tło pod waveformem (prostokąt)
+    # tło pod waveformem (tu i tak fully transparent, ale zostawiam strukturę)
     wave_bg_img = Image.new("RGBA", (VIDEO_SIZE[0], VIDEO_SIZE[1]), (0, 0, 0, 0))
     draw = ImageDraw.Draw(wave_bg_img)
     draw.rectangle(
@@ -621,16 +741,19 @@ def main():
         wave_height=wave_height,
     )
 
+    overlay_clips = [
+        bg_full,
+        card_bg_clip,
+        wave_bg_clip,
+        waveform_clip,
+        cover_clip,
+        vertical_title_clip,
+    ]
+    if text_block_cropped is not None:
+        overlay_clips.append(text_block_cropped)
+
     final_video = CompositeVideoClip(
-        [
-            bg_full,
-            card_bg_clip,
-            wave_bg_clip,
-            waveform_clip,
-            cover_clip,
-            text_clip,
-            vertical_title_clip,
-        ],
+        overlay_clips,
         size=VIDEO_SIZE,
     ).set_duration(total_duration)
 

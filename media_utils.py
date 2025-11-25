@@ -15,7 +15,7 @@ from mutagen.id3 import ID3, APIC, ID3NoHeaderError, TPUB, TXXX
 EasyID3.RegisterTextKey("publisher", "TPUB")
 
 SUPPORTED_EXT = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
-TOTAL_TARGET_SEC = 9.0
+TOTAL_TARGET_SEC = 10.0
 
 
 # ---------- AUDIO ANALYSIS (SAFE) ----------
