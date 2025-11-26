@@ -21,48 +21,43 @@ from media_utils import TOTAL_TARGET_SEC
 
 VIDEO_SIZE = (1080, 1920)  # (width, height)
 
-SAFE_TOP_MARGIN = 420
+SAFE_TOP_MARGIN = 300
 SAFE_BOTTOM_MARGIN = 420
 SAFE_LEFT_MARGIN = 160
 SAFE_RIGHT_MARGIN = 160
 
-# --- CARD / LAYOUT (jak na mocku) ---
+# --- CARD / LAYOUT (as in the mockup) ---
 CARD_LEFT = SAFE_LEFT_MARGIN
 CARD_RIGHT = VIDEO_SIZE[0] - SAFE_RIGHT_MARGIN
 CARD_TOP = SAFE_TOP_MARGIN
 CARD_BOTTOM = VIDEO_SIZE[1] - SAFE_BOTTOM_MARGIN
-CARD_BORDER_WIDTH = 12
 
-STRIPE_WIDTH = 64  # pionowy pasek z tytułem po prawej
+STRIPE_WIDTH = 64  # vertical stripe with title on the right
 
-# obszar wewnątrz ramki
-INNER_LEFT = CARD_LEFT + CARD_BORDER_WIDTH
-INNER_RIGHT = CARD_RIGHT - CARD_BORDER_WIDTH
-INNER_TOP = CARD_TOP + CARD_BORDER_WIDTH
-INNER_BOTTOM = CARD_BOTTOM - CARD_BORDER_WIDTH
+# area inside the frame
+INNER_LEFT = CARD_LEFT 
+INNER_RIGHT = CARD_RIGHT 
+INNER_TOP = CARD_TOP 
+INNER_BOTTOM = CARD_BOTTOM
 
-# okładka: kwadrat po lewej, reszta na stripe
-COVER_SIZE = INNER_RIGHT - INNER_LEFT - STRIPE_WIDTH
+# cover: square on the left, the rest is for the stripe
+COVER_SIZE = INNER_RIGHT - INNER_LEFT
 COVER_LEFT = INNER_LEFT
-COVER_TOP = INNER_TOP
+COVER_TOP = INNER_TOP + STRIPE_WIDTH
 
-# tekst pod okładką
+# radius of circular mask for vinyl_movie
+COVER_CIRCLE_RADIUS = COVER_SIZE * 0.42
+
+# text under the cover
 TEXT_TOP_GAP = 16
-TEXT_FONT_SIZE = 32
+TEXT_FONT_SIZE = 48
 
 # waveform
-TEXT_TO_WAVEFORM_GAP = 64
-WAVEFORM_HEIGHT = (
-    CARD_BOTTOM
-    - CARD_TOP
-    - COVER_SIZE
-    - TEXT_TOP_GAP
-    - TEXT_TO_WAVEFORM_GAP * 3
-    - TEXT_FONT_SIZE * 3
-)
+TEXT_TO_WAVEFORM_GAP = 0
+WAVEFORM_HEIGHT = 120
 
-# tytuł pionowy
-TITLE_FONT_SIZE = 32
+# vertical title
+TITLE_FONT_SIZE = 64
 
 # waveform analysis
 WAVEFORM_BINS = 256
@@ -70,14 +65,20 @@ WAVEFORM_NFFT = 2048
 WAVEFORM_HOP = 512
 
 FONT_CANDIDATES = [
-    './DoppioOne-Regular.ttf',
+    "./DoppioOne-Regular.ttf",
     "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
 ]
 
-# animacja tekstu
-TEXT_LINE_STAGGER = 0.4         # odstęp pomiędzy liniami
-TEXT_LINE_ANIM_DURATION = 0.4  # czas animacji pojedynczej linii (sekundy)
+# text animation
+TEXT_LINE_STAGGER = 0.4        # delay between lines
+TEXT_LINE_ANIM_DURATION = 0.4  # single line animation duration (seconds)
+
+WAVEFORM_TOP = COVER_TOP + COVER_SIZE + TEXT_TO_WAVEFORM_GAP
+WAVEFORM_PADDING = 20
+TEXT_TOP = WAVEFORM_TOP + WAVEFORM_HEIGHT + 1
+
+TEXT_BG_COLOR = (22, 22, 29, 220)
 
 
 # ---------- Helpers ----------
@@ -112,17 +113,19 @@ def resize_video_clip_clip_safe(clip, target_size):
     return clip.fl_image(resize_frame)
 
 
-def create_text_image(label_text: str,
-                      font_size: int,
-                      align: str = "center",
-                      max_width: int | None = None) -> np.ndarray:
+def create_text_image(
+    label_text: str,
+    font_size: int,
+    align: str = "center",
+    max_width: int | None = None,
+) -> np.ndarray:
     """
-    Szanuje istniejące '\n'. Jeśli max_width podany i nie ma '\n', robi prosty word-wrap.
-    Cień usunięty – sam tekst bez shadow.
+    Respects existing '\n'. If max_width is given and there is no '\n',
+    performs a simple word-wrap. No shadow – plain text only.
     """
     font = load_font(font_size)
 
-    # --- bez max_width: używamy multiline, szanujemy \n ---
+    # --- no max_width: use multiline, respect '\n' ---
     if max_width is None:
         dummy = Image.new("RGBA", (2000, 800), (0, 0, 0, 0))
         draw = ImageDraw.Draw(dummy)
@@ -133,11 +136,11 @@ def create_text_image(label_text: str,
         text_h = y1 - y0
 
         pad_x = 20
-        pad_y = 10
+        pad_y = 0
         img_w = text_w + 2 * pad_x
-        img_h = text_h + 2 * pad_y
+        img_h = text_h * 2
 
-        img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+        img = Image.new("RGBA", (img_w, img_h), TEXT_BG_COLOR)
         draw = ImageDraw.Draw(img)
 
         if align == "center":
@@ -151,12 +154,12 @@ def create_text_image(label_text: str,
             label_text,
             font=font,
             fill=(255, 255, 255, 255),
-            spacing=10,
+            spacing=0,
             align=align,
         )
         return np.array(img)
 
-    # --- max_width != None i already has '\n' -> użyj jak jest, bez cienia ---
+    # --- max_width != None and already has '\n' -> use as-is ---
     if "\n" in label_text:
         text = label_text
         dummy = Image.new("RGBA", (max_width, 800), (0, 0, 0, 0))
@@ -190,7 +193,7 @@ def create_text_image(label_text: str,
         )
         return np.array(img)
 
-    # --- max_width != None i brak '\n' -> word-wrap, bez cienia ---
+    # --- max_width != None and no '\n' -> word-wrap ---
     words = label_text.split()
     lines = []
     current = ""
@@ -210,7 +213,7 @@ def create_text_image(label_text: str,
         lines.append(current)
 
     text = "\n".join(lines)
-    bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=10)
+    bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=10, align="center")
     x0, y0, x1, y1 = bbox
     text_w = x1 - x0
     text_h = y1 - y0
@@ -240,13 +243,15 @@ def create_text_image(label_text: str,
     return np.array(img)
 
 
-def create_text_line_image(label_text: str,
-                           font_size: int,
-                           color: tuple[int, int, int],
-                           max_width: int) -> np.ndarray:
+def create_text_line_image(
+    label_text: str,
+    font_size: int,
+    color: tuple[int, int, int],
+    max_width: int,
+) -> np.ndarray:
     """
-    Jedna linia tekstu (bez '\n'), bez cienia, w zadanym kolorze.
-    Używana do 3 linii pod okładką, żeby mieć osobne kolory i klipy.
+    Single line of text (no '\n'), no shadow, in the given color.
+    Used for 3 lines under the cover so they can have separate colors and clips.
     """
     font = load_font(font_size)
 
@@ -259,11 +264,11 @@ def create_text_line_image(label_text: str,
     text_h = y1 - y0
 
     pad_x = 20
-    pad_y = 8
+    pad_y = 0
     img_w = min(max_width, text_w + 2 * pad_x)
-    img_h = text_h + 2 * pad_y
+    img_h = text_h * 2
 
-    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    img = Image.new("RGBA", (img_w, img_h), TEXT_BG_COLOR)
     draw = ImageDraw.Draw(img)
 
     x_text = pad_x
@@ -279,10 +284,12 @@ def create_text_line_image(label_text: str,
     return np.array(img)
 
 
-def rgba_to_imageclip(rgba_arr: np.ndarray,
-                      duration: float,
-                      start: float = 0.0,
-                      position=("center", "center")) -> ImageClip:
+def rgba_to_imageclip(
+    rgba_arr: np.ndarray,
+    duration: float,
+    start: float = 0.0,
+    position=("center", "center"),
+) -> ImageClip:
     rgb = rgba_arr[..., :3]
     alpha = rgba_arr[..., 3] / 255.0
 
@@ -296,9 +303,15 @@ def rgba_to_imageclip(rgba_arr: np.ndarray,
     return img_clip
 
 
-def compute_waveform_bands(audio_path: str,
-                           total_duration: float,
-                           sr_target: int | None = None):
+def compute_waveform_bands(
+    audio_path: str,
+    total_duration: float,
+    sr_target: int | None = None,
+):
+    """
+    Compute 3-band (low/mid/high) normalized waveform magnitudes,
+    resampled to WAVEFORM_BINS along time.
+    """
     y, sr = librosa.load(audio_path, sr=sr_target, mono=True)
     max_samples = int(total_duration * sr)
     if len(y) > max_samples:
@@ -350,22 +363,24 @@ def compute_waveform_bands(audio_path: str,
     return bands_resampled
 
 
-def make_waveform_clip(bands: np.ndarray,
-                       total_duration: float,
-                       wave_left: int,
-                       wave_top: int,
-                       wave_width: int,
-                       wave_height: int) -> VideoClip:
+def make_waveform_clip(
+    bands: np.ndarray,
+    total_duration: float,
+    wave_left: int,
+    wave_top: int,
+    wave_width: int,
+    wave_height: int,
+) -> VideoClip:
     """
-    Przezroczysty RGB waveform + czerwona linia progresu.
-    Linijki blisko aktualnego progresu są powiększane (do 1.5x),
-    z liniową interpolacją w zależności od odległości.
+    Transparent RGB waveform + red progress line.
+    Bars near the current playback position are scaled up (up to 1.5x)
+    with linear interpolation based on distance from the progress position.
     """
     BAR_WIDTH = 4
     BAR_GAP = 1
 
-    MAX_SCALE = 1.5             # wysokość dokładnie pod wskaźnikiem progresu
-    HIGHLIGHT_RADIUS_BINS = 3   # w ilu "słupkach" wygasa efekt (liniowo)
+    MAX_SCALE = 1            # scale for bars directly under the progress line
+    HIGHLIGHT_RADIUS_BINS = 3  # how many bars around progress get the effect (fades linearly)
 
     n_bins = bands.shape[0]
     if n_bins <= 0:
@@ -377,18 +392,21 @@ def make_waveform_clip(bands: np.ndarray,
         scale = wave_width / total_bar_width
         new_bins = max(1, int(n_bins * scale))
         xs = np.linspace(0, n_bins - 1, new_bins)
-        bands = np.stack([
-            np.interp(xs, np.arange(n_bins), bands[:, 0]),
-            np.interp(xs, np.arange(n_bins), bands[:, 1]),
-            np.interp(xs, np.arange(n_bins), bands[:, 2]),
-        ], axis=1)
+        bands = np.stack(
+            [
+                np.interp(xs, np.arange(n_bins), bands[:, 0]),
+                np.interp(xs, np.arange(n_bins), bands[:, 1]),
+                np.interp(xs, np.arange(n_bins), bands[:, 2]),
+            ],
+            axis=1,
+        )
         n_bins = new_bins
         total_bar_width = n_bins * (BAR_WIDTH + BAR_GAP)
 
     H, W = VIDEO_SIZE[1], VIDEO_SIZE[0]
     y_center = wave_top + wave_height // 2
 
-    # precompute bazowe amplitudy i pozycje słupków (bez skalowania)
+    # precompute base amplitudes and bar positions (before scaling)
     base_low = np.zeros(n_bins, dtype=int)
     base_mid = np.zeros(n_bins, dtype=int)
     base_high = np.zeros(n_bins, dtype=int)
@@ -406,8 +424,14 @@ def make_waveform_clip(bands: np.ndarray,
         x_starts[i] = x_start
         x_ends[i] = x_end
 
-    def draw_band(img: np.ndarray, height: int, x_start: int, x_end: int, color: np.ndarray):
-        """Rysuje pojedynczy pasek (góra+dół) o danej wysokości."""
+    def draw_band(
+        img: np.ndarray,
+        height: int,
+        x_start: int,
+        x_end: int,
+        color: np.ndarray,
+    ):
+        """Draw a single band (top+bottom) of the given height."""
         if height <= 0:
             return
 
@@ -419,60 +443,82 @@ def make_waveform_clip(bands: np.ndarray,
         if y0_top < y1_top:
             img[y0_top:y1_top, x_start:x_end, :] = np.maximum(
                 img[y0_top:y1_top, x_start:x_end, :],
-                color
+                color,
             )
         if y0_bot < y1_bot:
             img[y0_bot:y1_bot, x_start:x_end, :] = np.maximum(
                 img[y0_bot:y1_bot, x_start:x_end, :],
-                color
+                color,
             )
 
     def make_rgb_frame(t: float):
-        # startujemy od całkowicie czarnego obrazu (tło przezroczyste po masce)
+        # start from a completely black image
+        # (transparent after applying mask)
         img = np.zeros((H, W, 3), dtype=np.uint8)
 
-        # aktualny progres 0..1
+        # current progress 0..1
         if total_duration <= 0:
             progress = 0.0
         else:
             progress = max(0.0, min(1.0, t / total_duration))
 
-        # pozycja piksela czerwonej linii
+        # pixel position of the red progress line
         px = wave_left + int(progress * wave_width)
         px = max(wave_left, min(px, wave_left + wave_width - 1))
 
-        # który bin jest "pod" wskaźnikiem
+        # which bin is under the progress line
         progress_bin = progress * (n_bins - 1)
 
         for i in range(n_bins):
-            # skalowanie wysokości w zależności od odległości od progress_bin
+            # scale bar height based on distance from progress_bin
             dist = abs(i - progress_bin)
             if dist >= HIGHLIGHT_RADIUS_BINS:
-                scale = 1.0
+                scale = 1
             else:
-                scale = 1.0 + (MAX_SCALE - 1.0) * (1.0 - dist / HIGHLIGHT_RADIUS_BINS)
+                scale = 1 + (MAX_SCALE) * (1.0 - dist / HIGHLIGHT_RADIUS_BINS)
 
-            h_low = int(base_low[i] * scale)
-            h_mid = int(base_mid[i] * scale)
-            h_high = int(base_high[i] * scale)
+            h_low = max(1, int(base_low[i] * scale))
+            h_mid = max(1, int(base_mid[i] * scale))
+            h_high = max(1, int(base_high[i] * scale))
 
             x_start = x_starts[i]
             x_end = x_ends[i]
 
-            # rysujemy 3 pasma w RGB
-            draw_band(img, h_low,  x_start, x_end, np.array([255,   0,   0], dtype=np.uint8))
-            draw_band(img, h_mid,  x_start, x_end, np.array([  0, 255,   0], dtype=np.uint8))
-            draw_band(img, h_high, x_start, x_end, np.array([  0,   0, 255], dtype=np.uint8))
+            # draw 3 bands in RGB
+            draw_band(
+                img,
+                h_low,
+                x_start,
+                x_end,
+                np.array([255, 0, 0], dtype=np.uint8),
+            )
+            draw_band(
+                img,
+                h_mid,
+                x_start,
+                x_end,
+                np.array([0, 255, 0], dtype=np.uint8),
+            )
+            draw_band(
+                img,
+                h_high,
+                x_start,
+                x_end,
+                np.array([0, 0, 255], dtype=np.uint8),
+            )
 
-        # czerwona linia progresu na wierzchu
-        img[wave_top:wave_top + wave_height, px:px + 2, :] = np.array([255, 80, 80], dtype=np.uint8)
+        # red progress line on top
+        img[wave_top:wave_top + wave_height, px:px + 2, :] = np.array(
+            [255, 80, 80],
+            dtype=np.uint8,
+        )
 
         return img
 
-    # Clip RGB
+    # RGB clip
     color_clip = VideoClip(make_rgb_frame, duration=total_duration)
 
-    # Zbuduj maskę z jasności pikseli (czarne = 0 → w pełni przezroczyste)
+    # build mask from pixel brightness (black = 0 → fully transparent)
     mask_clip = color_clip.to_mask()
 
     return color_clip.set_mask(mask_clip)
@@ -480,12 +526,12 @@ def make_waveform_clip(bands: np.ndarray,
 
 def make_card_bg_clip(duration: float) -> ImageClip:
     """
-    Czarna karta/ramka jak na mocku.
+    Black card/frame (as in the mockup).
     """
     img = Image.new("RGBA", (VIDEO_SIZE[0], VIDEO_SIZE[1]), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # cała karta
+    # whole card
     draw.rectangle(
         [CARD_LEFT, CARD_TOP, CARD_RIGHT, CARD_BOTTOM],
         fill=(0, 0, 0, 200),
@@ -496,49 +542,115 @@ def make_card_bg_clip(duration: float) -> ImageClip:
     return rgba_to_imageclip(np.array(img), duration=duration, start=0, position=(0, 0))
 
 
-def make_vertical_title_clip(folder_title: str, duration: float) -> ImageClip:
+def make_title_clip(folder_title: str, duration: float) -> ImageClip:
     """
-    Pionowy napis na prawej krawędzi karty (w pasie STRIPE_WIDTH).
+    Vertical text on the right edge of the card (inside STRIPE_WIDTH).
     """
     text = folder_title.upper()
     arr = create_text_image(text, TITLE_FONT_SIZE, align="center")
-    img = Image.fromarray(arr).rotate(90, expand=True)
+    img = Image.fromarray(arr)
     arr_rot = np.array(img)
 
-    x = CARD_RIGHT - STRIPE_WIDTH * 1.1
+    x = CARD_LEFT - img.width // 2 + (CARD_RIGHT - CARD_LEFT) // 2
     y = CARD_TOP
 
     return rgba_to_imageclip(arr_rot, duration=duration, start=0, position=(x, y))
 
 
-def make_line_position_fn(line_index: int,
-                          y_final: int,
-                          line_height: int):
+def make_line_position_fn(
+    line_index: int,
+    y_final: int,
+    line_height: int,
+    x_pos: int,
+):
     """
-    Zwraca funkcję pozycji (x, y) dla linii tekstu:
-    - startuje poniżej docelowej pozycji,
-    - wjeżdża w górę w czasie TEXT_LINE_ANIM_DURATION,
-    - każda linia ma opóźnienie (stagger) TEXT_LINE_STAGGER * index.
+    Returns a position function (x, y) for a text line:
+    - starts below the final position,
+    - slides in upward over TEXT_LINE_ANIM_DURATION,
+    - each line has a staggered delay of TEXT_LINE_STAGGER * index.
     """
+
     def pos(t: float):
-        # lokalny czas tej linii (z uwzględnieniem staggera)
+        # local time for this line (including stagger)
         local_t = t - line_index * TEXT_LINE_STAGGER
 
         if local_t <= 0:
-            # jeszcze przed startem animacji – schowana poniżej
+            # before animation start – hidden below
             y = y_final + line_height
         elif local_t >= TEXT_LINE_ANIM_DURATION:
-            # po animacji – na miejscu
+            # after animation – in place
             y = y_final
         else:
-            # w trakcie animacji – liniowy slide-up
+            # during animation – linear slide up
             alpha = local_t / TEXT_LINE_ANIM_DURATION
-            # start: y_final + line_height, koniec: y_final
+            # start: y_final + line_height, end: y_final
             y = (y_final + line_height) - line_height * alpha
 
-        return (INNER_LEFT, int(y))
+        return (x_pos, int(y))
 
     return pos
+
+
+def make_circle_mask_array(size: int, radius: int) -> np.ndarray:
+    """
+    Create a 2D circular mask (float 0..1) with the given radius, centered.
+    """
+    cx = size / 2.0
+    cy = size / 2.0
+    Y, X = np.ogrid[:size, :size]
+    dist_sq = (X - cx) ** 2 + (Y - cy) ** 2
+    mask = (dist_sq <= radius**2).astype("float32")
+    return mask
+
+
+def make_vinyl_video_clip(
+    vinyl_path: str,
+    total_duration: float,
+) -> VideoClip:
+    """
+    Load video from vinyl_movie, loop it to total_duration,
+    crop to a square COVER_SIZE x COVER_SIZE and apply a circular mask.
+    """
+    base = VideoFileClip(vinyl_path).without_audio()
+
+    if base.duration <= 0:
+        raise ValueError(f"vinyl_movie has non-positive duration: {vinyl_path}")
+
+    loops_needed = max(1, math.ceil(total_duration / base.duration))
+    loop_clips = [base] * loops_needed
+    full = concatenate_videoclips(loop_clips).subclip(0, total_duration)
+
+    def crop_to_square(frame):
+        img = Image.fromarray(frame)
+        w, h = img.size
+        scale = COVER_SIZE / min(w, h)
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        img = img.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
+
+        cx = new_w // 2
+        cy = new_h // 2
+        half = COVER_SIZE // 2
+        left = max(0, cx - half)
+        top = max(0, cy - half)
+        right = left + COVER_SIZE
+        bottom = top + COVER_SIZE
+        img = img.crop((left, top, right, bottom))
+        return np.array(img)
+
+    square_clip = full.fl_image(crop_to_square)
+
+    # circular mask
+    circle_mask_arr = make_circle_mask_array(COVER_SIZE, COVER_CIRCLE_RADIUS)
+    mask_clip = ImageClip(circle_mask_arr, ismask=True).set_duration(total_duration)
+
+    square_clip = square_clip.set_duration(total_duration)
+    square_clip = square_clip.set_mask(mask_clip)
+
+    # position inside the card
+    square_clip = square_clip.set_position((COVER_LEFT, COVER_TOP))
+
+    return square_clip
 
 
 # ---------- Main ----------
@@ -583,7 +695,10 @@ def main():
     title = t0["title"]
     album = t0.get("album")
     year = t0.get("year")
-    cover_path = t0["vinyl_art"]
+
+    # old static cover kept as a fallback
+    cover_path = t0.get("vinyl_art")
+    vinyl_movie_path = t0.get("vinyl_movie")
 
     audio_clip = AudioFileClip(audio_path)
     total_duration = min(TOTAL_TARGET_SEC, audio_clip.duration)
@@ -596,56 +711,72 @@ def main():
     bg_loop_clips = [base_bg] * loops_needed
     bg_full = concatenate_videoclips(bg_loop_clips).subclip(0, total_duration)
 
-    # karta + pionowy tytuł
-    card_bg_clip = make_card_bg_clip(total_duration)
-    vertical_title_clip = make_vertical_title_clip(folder_title, total_duration)
+    # card + vertical title
+    title_clip = make_title_clip(folder_title, total_duration)
 
-    # okładka w kwadracie po lewej
-    cover_pil = Image.open(cover_path).convert("RGB")
-    cw, ch = cover_pil.size
-    scale = COVER_SIZE / min(cw, ch)
-    new_w = int(cw * scale)
-    new_h = int(ch * scale)
-    cover_resized = cover_pil.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
+    # --- cover: now we use vinyl_movie with circular mask ---
+    if vinyl_movie_path:
+        # if path is relative – join with folder
+        if not os.path.isabs(vinyl_movie_path):
+            vinyl_movie_full = os.path.join(folder, vinyl_movie_path)
+        else:
+            vinyl_movie_full = vinyl_movie_path
 
-    # przytnij do kwadratu COVER_SIZE x COVER_SIZE (środek)
-    cx, cy = new_w // 2, new_h // 2
-    half = COVER_SIZE // 2
-    left = max(0, cx - half)
-    top = max(0, cy - half)
-    right = left + COVER_SIZE
-    bottom = top + COVER_SIZE
-    cover_cropped = cover_resized.crop((left, top, right, bottom))
+        if not os.path.isfile(vinyl_movie_full):
+            raise FileNotFoundError(f"vinyl_movie not found: {vinyl_movie_full}")
 
-    cover_arr = np.array(cover_cropped)
-    cover_clip = (
-        ImageClip(cover_arr)
-        .set_duration(total_duration)
-        .set_start(0)
-        .set_position((COVER_LEFT, COVER_TOP))
-    )
+        cover_clip = make_vinyl_video_clip(vinyl_movie_full, total_duration)
+    else:
+        # fallback: old static cover (you can also apply circular mask here if desired)
+        if not cover_path:
+            raise ValueError("Neither vinyl_movie nor vinyl_art provided in analysis.json")
+        if not os.path.isabs(cover_path):
+            cover_path_full = os.path.join(folder, cover_path)
+        else:
+            cover_path_full = cover_path
 
-    # --- tekst pod okładką: osobne linie, kolory i animacja z dołu ---
+        cover_pil = Image.open(cover_path_full).convert("RGB")
+        cw, ch = cover_pil.size
+        scale = COVER_SIZE / min(cw, ch)
+        new_w = int(cw * scale)
+        new_h = int(ch * scale)
+        cover_resized = cover_pil.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
+
+        cx, cy = new_w // 2, new_h // 2
+        half = COVER_SIZE // 2
+        left = max(0, cx - half)
+        top = max(0, cy - half)
+        right = left + COVER_SIZE
+        bottom = top + COVER_SIZE
+        cover_cropped = cover_resized.crop((left, top, right, bottom))
+
+        cover_arr = np.array(cover_cropped)
+        cover_clip = (
+            ImageClip(cover_arr)
+            .set_duration(total_duration)
+            .set_start(0)
+            .set_position((COVER_LEFT, COVER_TOP))
+        )
+
+    # --- text under the cover: separate lines, colors, and slide-up animation ---
 
     lines = [artist, title]
     if album and year:
-      lines.append(year)
-            # lines.append(f"{album} ({year})")
-        # else:
-            # lines.append(album)
+        lines.append(year)
 
-    text_top = COVER_TOP + COVER_SIZE + TEXT_TOP_GAP
+    text_top = TEXT_TOP
     max_text_width = INNER_RIGHT - INNER_LEFT
 
     line_clips = []
     line_heights = []
+    line_x_positions = []
 
     for idx, line_text in enumerate(lines):
         if idx == 0:
-            # 1. linia – pełna biel
+            # first line – full white
             color = (255, 255, 255)
         else:
-            # 2. i 3. linia – trochę ciemniejsze
+            # 2nd and 3rd lines – slightly darker
             color = (196, 196, 196)
         arr = create_text_line_image(
             line_text,
@@ -654,18 +785,23 @@ def main():
             max_width=max_text_width,
         )
         line_height = arr.shape[0]
+        line_width = arr.shape[1]
         line_heights.append(line_height)
+
+        # horizontally center inside [INNER_LEFT, INNER_RIGHT]
+        x_centered = INNER_LEFT + (max_text_width - line_width) // 2
+        line_x_positions.append(x_centered)
 
         clip = rgba_to_imageclip(
             arr,
             duration=total_duration,
             start=0,
-            position=(INNER_LEFT, text_top),  # nadpiszemy funkcją pozycji niżej
+            position=(x_centered, text_top),  # overridden by animated function later
         )
 
         line_clips.append(clip)
 
-    # finalne pozycje linii w "prostokącie"
+    # final positions of lines in the text block (vertical)
     LINE_GAP = 0
     y_positions = []
     current_y = text_top
@@ -673,22 +809,21 @@ def main():
         y_positions.append(current_y)
         current_y += h + LINE_GAP
 
-    # nadpisujemy pozycje funkcjami animującymi wejście z dołu
+    # override positions with functions that animate from below, keeping centered X
     for i, clip in enumerate(line_clips):
         y_final = y_positions[i]
         line_h = line_heights[i]
-        pos_fn = make_line_position_fn(i, y_final, TEXT_FONT_SIZE * 6)
+        x_pos = line_x_positions[i]
+        pos_fn = make_line_position_fn(i, y_final, TEXT_FONT_SIZE * 6, x_pos)
         line_clips[i] = clip.set_position(pos_fn)
 
-    # całkowita wysokość bloku tekstowego – do obliczenia waveform_top i maski
+    # total height of the text block – used for cropping
     if line_heights:
         text_block_height = (y_positions[-1] + line_heights[-1]) - text_top
     else:
         text_block_height = 0
 
-    # --- MASKA / CLIP PRZYCINANY ---
-    # Składamy wszystkie linie w jeden pełnoekranowy klip (przezroczyste tło),
-    # potem przycinamy prostokątem tak, żeby tekst "wchodził spod maski".
+    # --- MASKED / CROPPED TEXT BLOCK CLIP ---
     if line_clips:
         text_block_clip_full = CompositeVideoClip(
             line_clips,
@@ -704,13 +839,12 @@ def main():
             y2=text_block_bottom,
         )
 
-        # Po cropie klip ma swój (0,0), więc ustawiamy go w miejscu prostokąta
         text_block_cropped = text_block_cropped.set_position((INNER_LEFT, text_top))
     else:
         text_block_cropped = None
 
-    # waveform w dolnej części karty
-    wave_top = text_top + text_block_height + TEXT_TO_WAVEFORM_GAP
+    # waveform in the bottom part of the card
+    wave_top = WAVEFORM_TOP
     wave_height = WAVEFORM_HEIGHT
     wave_left = INNER_LEFT
     wave_width = INNER_RIGHT - INNER_LEFT
@@ -718,12 +852,12 @@ def main():
     print("Computing waveform bands...")
     bands = compute_waveform_bands(audio_path, total_duration)
 
-    # tło pod waveformem (tu i tak fully transparent, ale zostawiam strukturę)
+    # background under the waveform
     wave_bg_img = Image.new("RGBA", (VIDEO_SIZE[0], VIDEO_SIZE[1]), (0, 0, 0, 0))
     draw = ImageDraw.Draw(wave_bg_img)
     draw.rectangle(
         [wave_left, wave_top, wave_left + wave_width, wave_top + wave_height],
-        fill=(0, 0, 0, 0),
+        fill=TEXT_BG_COLOR,
     )
     wave_bg_clip = rgba_to_imageclip(
         np.array(wave_bg_img),
@@ -743,11 +877,10 @@ def main():
 
     overlay_clips = [
         bg_full,
-        card_bg_clip,
         wave_bg_clip,
         waveform_clip,
         cover_clip,
-        vertical_title_clip,
+        title_clip,
     ]
     if text_block_cropped is not None:
         overlay_clips.append(text_block_cropped)

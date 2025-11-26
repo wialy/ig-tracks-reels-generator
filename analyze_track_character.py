@@ -82,12 +82,12 @@ def analyze_technical_features(y: np.ndarray, sr: int) -> Dict[str, Any]:
 
     # HPSS – percussive vs harmonic
     harmonic, percussive = librosa.effects.hpss(y)
-    # percussive RMS vs całość
+    # percussive RMS vs whole
     perc_rms = librosa.feature.rms(y=percussive, frame_length=frame_length, hop_length=hop_length)[0]
     perc_rms_norm = _norm01(perc_rms)
     percussive_density = float(np.mean(perc_rms_norm))
 
-    # Bas – udział energii w dole pasma (np. < 150 Hz)
+    # Bass – share of energy in the low band (e.g. < 150 Hz)
     S = np.abs(librosa.stft(y, n_fft=2048, hop_length=hop_length))
     freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
     low_band = S[(freqs >= 20) & (freqs <= 150), :]
@@ -96,10 +96,10 @@ def analyze_technical_features(y: np.ndarray, sr: int) -> Dict[str, Any]:
     if full_energy < 1e-9:
         low_end_intensity = 0.0
     else:
-        # lekko podkręcamy skale -> tanh
+        # slightly boost the scale -> tanh
         low_end_intensity = float(np.tanh(3.0 * (low_energy / full_energy)))
 
-    # Groove / swing – patrzymy na zmienność odstępów między onsets
+    # Groove / swing – look at the variability of intervals between onsets
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
     onset_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, hop_length=hop_length)
     groove_swing = 0.0
@@ -107,10 +107,10 @@ def analyze_technical_features(y: np.ndarray, sr: int) -> Dict[str, Any]:
         onsets_time = librosa.frames_to_time(onset_frames, sr=sr, hop_length=hop_length)
         ioi = np.diff(onsets_time)
         if len(ioi) > 1:
-            # znormalizowana zmienność między odstępami
+            # normalized variability between intervals
             ioi_norm = ioi / (np.mean(ioi) + 1e-9)
             groove_swing_raw = float(np.std(ioi_norm))
-            # przeskalowanie do 0-1
+            # scale to 0-1
             groove_swing = float(np.tanh(2.0 * groove_swing_raw))
 
     return {
