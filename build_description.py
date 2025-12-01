@@ -39,17 +39,16 @@ def main():
 
     lines.append("")  # blank line
 
-    # Updated SEO-friendly static description
+    # Updated SEO-friendly static description (with max 3 hashtags)
     tail = dedent(
         """\
-        Daily Drops is my daily reel series showcasing one standout electronic track per day, focused on the most impactful moment — the drop.
-        I dig through new releases and hidden gems across house, techno, melodic, minimal, breaks, ambient and more to highlight tracks worth your attention.
+        Welcome to Daily Drops — a fast, punchy reel series where each day I highlight one powerful drop from a fresh electronic track. Whether it’s house, techno, deep house, organic house, melodic techno, or anything underground that hits with energy, you get the best moment of the song in just a few seconds.
 
-        Whether you're a DJ looking for fresh tracks, a producer searching for inspiration, or just someone who loves discovering new electronic music, these short clips make it easy to stay updated without spending hours digging.
+        If you're searching for DJ music, DJ tracks, DJ mixes, DJ sets, or that perfect beat drop for inspiration, this series keeps your feed full of new electronic music and undiscovered gems. Great for DJs, producers, and anyone exploring music discovery, fresh tracks, or club-ready moments that stand out.
 
-        Follow for daily underground finds, new releases and festival-ready drops — one reel a day, one new track to check out.
+        One reel. One track. One drop worth remembering.
 
-        #dailydrops 
+        #dailydrops #dj #electronicmusic
         """
     )
 

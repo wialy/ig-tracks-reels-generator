@@ -4,15 +4,17 @@ import os
 import subprocess
 
 
-def run_step(script_name: str, folder: str):
+def run_step(script_name: str, *args):
     """
     Run a single step script like:
-      python script_name folder
+      python script_name <args...>
     using the same Python executable as this script.
     """
-    cmd = [sys.executable, script_name, folder]
+    cmd = [sys.executable, script_name] + list(args)
+
     print(f"\n=== Running: {' '.join(cmd)} ===")
     result = subprocess.run(cmd)
+
     if result.returncode != 0:
         print(f"\n[ERROR] Step {script_name} failed with code {result.returncode}. Aborting pipeline.")
         sys.exit(result.returncode)
@@ -37,6 +39,11 @@ def main():
     run_step("build_vinyl_art.py", folder)
     run_step("build_vinyl_movie.py", folder)
     run_step("build_audio.py", folder)
+
+    # waveform generator with multiple arguments
+    audio_file = os.path.join(folder, "_audio.mp3")
+    run_step("generate_waveform_video.py", audio_file, "760", "120")
+
     run_step("build_video_single.py", folder)
     run_step("cleanup.py", folder)
     run_step("build_description.py", folder)

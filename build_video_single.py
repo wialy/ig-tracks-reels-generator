@@ -15,7 +15,6 @@ from moviepy.editor import (
     CompositeVideoClip,
     concatenate_videoclips,
 )
-import librosa
 
 from media_utils import TOTAL_TARGET_SEC
 
@@ -35,9 +34,9 @@ CARD_BOTTOM = VIDEO_SIZE[1] - SAFE_BOTTOM_MARGIN
 STRIPE_WIDTH = 64  # vertical stripe with title on the right
 
 # area inside the frame
-INNER_LEFT = CARD_LEFT 
-INNER_RIGHT = CARD_RIGHT 
-INNER_TOP = CARD_TOP 
+INNER_LEFT = CARD_LEFT
+INNER_RIGHT = CARD_RIGHT
+INNER_TOP = CARD_TOP
 INNER_BOTTOM = CARD_BOTTOM
 
 # cover: square on the left, the rest is for the stripe
@@ -50,19 +49,14 @@ COVER_CIRCLE_RADIUS = COVER_SIZE * 0.42
 
 # text under the cover
 TEXT_TOP_GAP = 16
-TEXT_FONT_SIZE = 48
+TEXT_FONT_SIZE = 42
 
-# waveform
+# waveform area (now used for _waveform.mp4 placement)
 TEXT_TO_WAVEFORM_GAP = 0
 WAVEFORM_HEIGHT = 120
 
 # vertical title
 TITLE_FONT_SIZE = 64
-
-# waveform analysis
-WAVEFORM_BINS = 256
-WAVEFORM_NFFT = 2048
-WAVEFORM_HOP = 512
 
 FONT_CANDIDATES = [
     "./DoppioOne-Regular.ttf",
@@ -75,7 +69,6 @@ TEXT_LINE_STAGGER = 0.4        # delay between lines
 TEXT_LINE_ANIM_DURATION = 0.4  # single line animation duration (seconds)
 
 WAVEFORM_TOP = COVER_TOP + COVER_SIZE + TEXT_TO_WAVEFORM_GAP
-WAVEFORM_PADDING = 20
 TEXT_TOP = WAVEFORM_TOP + WAVEFORM_HEIGHT + 1
 
 TEXT_BG_COLOR = (22, 22, 29, 220)
@@ -266,7 +259,7 @@ def create_text_line_image(
     pad_x = 20
     pad_y = 0
     img_w = min(max_width, text_w + 2 * pad_x)
-    img_h = text_h * 2
+    img_h = int(text_h * 2)
 
     img = Image.new("RGBA", (img_w, img_h), TEXT_BG_COLOR)
     draw = ImageDraw.Draw(img)
@@ -303,227 +296,6 @@ def rgba_to_imageclip(
     return img_clip
 
 
-def compute_waveform_bands(
-    audio_path: str,
-    total_duration: float,
-    sr_target: int | None = None,
-):
-    """
-    Compute 3-band (low/mid/high) normalized waveform magnitudes,
-    resampled to WAVEFORM_BINS along time.
-    """
-    y, sr = librosa.load(audio_path, sr=sr_target, mono=True)
-    max_samples = int(total_duration * sr)
-    if len(y) > max_samples:
-        y = y[:max_samples]
-
-    S = np.abs(librosa.stft(y, n_fft=WAVEFORM_NFFT, hop_length=WAVEFORM_HOP))
-    freqs = librosa.fft_frequencies(sr=sr, n_fft=WAVEFORM_NFFT)
-
-    low_max = 200.0
-    mid_min = 200.0
-    mid_max = 2000.0
-    high_min = 2000.0
-
-    low_idx = np.where(freqs <= low_max)[0]
-    mid_idx = np.where((freqs > mid_min) & (freqs <= mid_max))[0]
-    high_idx = np.where(freqs > high_min)[0]
-
-    def band_mean(mag, idx):
-        if len(idx) == 0:
-            return np.zeros(mag.shape[1])
-        return mag[idx, :].mean(axis=0)
-
-    low = band_mean(S, low_idx)
-    mid = band_mean(S, mid_idx)
-    high = band_mean(S, high_idx)
-
-    def norm_band(b):
-        b = b.astype(float)
-        if b.max() > 0:
-            b = b / b.max()
-        return b
-
-    low = norm_band(low)
-    mid = norm_band(mid)
-    high = norm_band(high)
-
-    bands = np.stack([low, mid, high], axis=1)
-
-    n_frames = bands.shape[0]
-    if n_frames == 0:
-        return np.zeros((WAVEFORM_BINS, 3), dtype=float)
-
-    xs = np.linspace(0, n_frames - 1, WAVEFORM_BINS)
-    bands_resampled = np.zeros((WAVEFORM_BINS, 3), dtype=float)
-    for c in range(3):
-        bands_resampled[:, c] = np.interp(xs, np.arange(n_frames), bands[:, c])
-
-    bands_resampled = np.clip(bands_resampled, 0.0, 1.0)
-    return bands_resampled
-
-
-def make_waveform_clip(
-    bands: np.ndarray,
-    total_duration: float,
-    wave_left: int,
-    wave_top: int,
-    wave_width: int,
-    wave_height: int,
-) -> VideoClip:
-    """
-    Transparent RGB waveform + red progress line.
-    Bars near the current playback position are scaled up (up to 1.5x)
-    with linear interpolation based on distance from the progress position.
-    """
-    BAR_WIDTH = 4
-    BAR_GAP = 1
-
-    MAX_SCALE = 1            # scale for bars directly under the progress line
-    HIGHLIGHT_RADIUS_BINS = 3  # how many bars around progress get the effect (fades linearly)
-
-    n_bins = bands.shape[0]
-    if n_bins <= 0:
-        n_bins = 1
-        bands = np.zeros((1, 3), dtype=float)
-
-    total_bar_width = n_bins * (BAR_WIDTH + BAR_GAP)
-    if total_bar_width > wave_width:
-        scale = wave_width / total_bar_width
-        new_bins = max(1, int(n_bins * scale))
-        xs = np.linspace(0, n_bins - 1, new_bins)
-        bands = np.stack(
-            [
-                np.interp(xs, np.arange(n_bins), bands[:, 0]),
-                np.interp(xs, np.arange(n_bins), bands[:, 1]),
-                np.interp(xs, np.arange(n_bins), bands[:, 2]),
-            ],
-            axis=1,
-        )
-        n_bins = new_bins
-        total_bar_width = n_bins * (BAR_WIDTH + BAR_GAP)
-
-    H, W = VIDEO_SIZE[1], VIDEO_SIZE[0]
-    y_center = wave_top + wave_height // 2
-
-    # precompute base amplitudes and bar positions (before scaling)
-    base_low = np.zeros(n_bins, dtype=int)
-    base_mid = np.zeros(n_bins, dtype=int)
-    base_high = np.zeros(n_bins, dtype=int)
-    x_starts = np.zeros(n_bins, dtype=int)
-    x_ends = np.zeros(n_bins, dtype=int)
-
-    for i in range(n_bins):
-        L, M, Hband = bands[i]
-        base_low[i] = int(L * (wave_height / 2))
-        base_mid[i] = int(M * (wave_height / 2))
-        base_high[i] = int(Hband * (wave_height / 2))
-
-        x_start = wave_left + i * (BAR_WIDTH + BAR_GAP)
-        x_end = x_start + BAR_WIDTH
-        x_starts[i] = x_start
-        x_ends[i] = x_end
-
-    def draw_band(
-        img: np.ndarray,
-        height: int,
-        x_start: int,
-        x_end: int,
-        color: np.ndarray,
-    ):
-        """Draw a single band (top+bottom) of the given height."""
-        if height <= 0:
-            return
-
-        y0_top = max(wave_top, y_center - height)
-        y1_top = y_center
-        y0_bot = y_center
-        y1_bot = min(wave_top + wave_height, y_center + height)
-
-        if y0_top < y1_top:
-            img[y0_top:y1_top, x_start:x_end, :] = np.maximum(
-                img[y0_top:y1_top, x_start:x_end, :],
-                color,
-            )
-        if y0_bot < y1_bot:
-            img[y0_bot:y1_bot, x_start:x_end, :] = np.maximum(
-                img[y0_bot:y1_bot, x_start:x_end, :],
-                color,
-            )
-
-    def make_rgb_frame(t: float):
-        # start from a completely black image
-        # (transparent after applying mask)
-        img = np.zeros((H, W, 3), dtype=np.uint8)
-
-        # current progress 0..1
-        if total_duration <= 0:
-            progress = 0.0
-        else:
-            progress = max(0.0, min(1.0, t / total_duration))
-
-        # pixel position of the red progress line
-        px = wave_left + int(progress * wave_width)
-        px = max(wave_left, min(px, wave_left + wave_width - 1))
-
-        # which bin is under the progress line
-        progress_bin = progress * (n_bins - 1)
-
-        for i in range(n_bins):
-            # scale bar height based on distance from progress_bin
-            dist = abs(i - progress_bin)
-            if dist >= HIGHLIGHT_RADIUS_BINS:
-                scale = 1
-            else:
-                scale = 1 + (MAX_SCALE) * (1.0 - dist / HIGHLIGHT_RADIUS_BINS)
-
-            h_low = max(1, int(base_low[i] * scale))
-            h_mid = max(1, int(base_mid[i] * scale))
-            h_high = max(1, int(base_high[i] * scale))
-
-            x_start = x_starts[i]
-            x_end = x_ends[i]
-
-            # draw 3 bands in RGB
-            draw_band(
-                img,
-                h_low,
-                x_start,
-                x_end,
-                np.array([255, 0, 0], dtype=np.uint8),
-            )
-            draw_band(
-                img,
-                h_mid,
-                x_start,
-                x_end,
-                np.array([0, 255, 0], dtype=np.uint8),
-            )
-            draw_band(
-                img,
-                h_high,
-                x_start,
-                x_end,
-                np.array([0, 0, 255], dtype=np.uint8),
-            )
-
-        # red progress line on top
-        img[wave_top:wave_top + wave_height, px:px + 2, :] = np.array(
-            [255, 80, 80],
-            dtype=np.uint8,
-        )
-
-        return img
-
-    # RGB clip
-    color_clip = VideoClip(make_rgb_frame, duration=total_duration)
-
-    # build mask from pixel brightness (black = 0 → fully transparent)
-    mask_clip = color_clip.to_mask()
-
-    return color_clip.set_mask(mask_clip)
-
-
 def make_card_bg_clip(duration: float) -> ImageClip:
     """
     Black card/frame (as in the mockup).
@@ -536,7 +308,7 @@ def make_card_bg_clip(duration: float) -> ImageClip:
         [CARD_LEFT, CARD_TOP, CARD_RIGHT, CARD_BOTTOM],
         fill=(0, 0, 0, 200),
         outline=(0, 0, 0, 200),
-        width=CARD_BORDER_WIDTH,
+        width=0,
     )
 
     return rgba_to_imageclip(np.array(img), duration=duration, start=0, position=(0, 0))
@@ -664,12 +436,16 @@ def main():
 
     analysis_path = os.path.join(folder, "analysis.json")
     audio_path = os.path.join(folder, "_audio.mp3")
+    waveform_video_path = os.path.join(folder, "_waveform.mp4")
 
     if not os.path.isfile(analysis_path):
         print(f"Error: {analysis_path} not found. Run analyze_tracks.py first.")
         sys.exit(1)
     if not os.path.isfile(audio_path):
         print(f"Error: {audio_path} not found. Run build_audio.py first.")
+        sys.exit(1)
+    if not os.path.isfile(waveform_video_path):
+        print(f"Error: {waveform_video_path} not found. Generate _waveform.mp4 first.")
         sys.exit(1)
 
     folder_title = os.path.basename(os.path.normpath(folder)) or folder
@@ -681,6 +457,7 @@ def main():
         sys.exit(1)
 
     print(f"Using background video: {os.path.basename(bg_video_path)}")
+    print(f"Using waveform video: {os.path.basename(waveform_video_path)}")
 
     with open(analysis_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -727,7 +504,7 @@ def main():
 
         cover_clip = make_vinyl_video_clip(vinyl_movie_full, total_duration)
     else:
-        # fallback: old static cover (you can also apply circular mask here if desired)
+        # fallback: old static cover
         if not cover_path:
             raise ValueError("Neither vinyl_movie nor vinyl_art provided in analysis.json")
         if not os.path.isabs(cover_path):
@@ -843,44 +620,34 @@ def main():
     else:
         text_block_cropped = None
 
-    # waveform in the bottom part of the card
+    # --- WAVEFORM VIDEO (_waveform.mp4) IN PLACE OF OLD WAVEFORM ---
+
     wave_top = WAVEFORM_TOP
     wave_height = WAVEFORM_HEIGHT
     wave_left = INNER_LEFT
     wave_width = INNER_RIGHT - INNER_LEFT
 
-    print("Computing waveform bands...")
-    bands = compute_waveform_bands(audio_path, total_duration)
+    waveform_raw = VideoFileClip(waveform_video_path).without_audio()
 
-    # background under the waveform
-    wave_bg_img = Image.new("RGBA", (VIDEO_SIZE[0], VIDEO_SIZE[1]), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(wave_bg_img)
-    draw.rectangle(
-        [wave_left, wave_top, wave_left + wave_width, wave_top + wave_height],
-        fill=TEXT_BG_COLOR,
-    )
-    wave_bg_clip = rgba_to_imageclip(
-        np.array(wave_bg_img),
-        duration=total_duration,
-        start=0,
-        position=(0, 0),
-    )
+    # loop or trim waveform video to match total_duration
+    if waveform_raw.duration < total_duration:
+        wf_loops = max(1, math.ceil(total_duration / waveform_raw.duration))
+        wf_loop_clips = [waveform_raw] * wf_loops
+        waveform_full = concatenate_videoclips(wf_loop_clips).subclip(0, total_duration)
+    else:
+        waveform_full = waveform_raw.subclip(0, total_duration)
 
-    waveform_clip = make_waveform_clip(
-        bands=bands,
-        total_duration=total_duration,
-        wave_left=wave_left,
-        wave_top=wave_top,
-        wave_width=wave_width,
-        wave_height=wave_height,
-    )
+    waveform_resized = resize_video_clip_clip_safe(
+        waveform_full, (wave_width, wave_height)
+    ).set_position((wave_left, wave_top))
+
+    # --- final composition ---
 
     overlay_clips = [
         bg_full,
-        wave_bg_clip,
-        waveform_clip,
         cover_clip,
         title_clip,
+        waveform_resized,
     ]
     if text_block_cropped is not None:
         overlay_clips.append(text_block_cropped)
