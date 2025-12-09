@@ -381,7 +381,9 @@ def make_vinyl_video_clip(
 ) -> VideoClip:
     """
     Load video from vinyl_movie, loop it to total_duration,
-    crop to a square COVER_SIZE x COVER_SIZE and apply a circular mask.
+    crop to a square COVER_SIZE x COVER_SIZE, scale it 2x,
+    and apply a circular mask that matches the scaled size.
+    The visual center stays in the same place as the original cover.
     """
     base = VideoFileClip(vinyl_path).without_audio()
 
@@ -391,6 +393,8 @@ def make_vinyl_video_clip(
     loops_needed = max(1, math.ceil(total_duration / base.duration))
     loop_clips = [base] * loops_needed
     full = concatenate_videoclips(loop_clips).subclip(0, total_duration)
+
+    # --- 1) crop to COVER_SIZE x COVER_SIZE (original cover size) ---
 
     def crop_to_square(frame):
         img = Image.fromarray(frame)
@@ -410,19 +414,49 @@ def make_vinyl_video_clip(
         img = img.crop((left, top, right, bottom))
         return np.array(img)
 
-    square_clip = full.fl_image(crop_to_square)
+    square_clip = full.fl_image(crop_to_square).set_duration(total_duration)
 
-    # circular mask
-    circle_mask_arr = make_circle_mask_array(COVER_SIZE, COVER_CIRCLE_RADIUS)
+    # --- 2) scale video 2x, using safe PIL LANCZOS resize ---
+
+    scale_factor = 1.9
+    orig_size = COVER_SIZE
+    new_size = int(orig_size * scale_factor)
+
+    def _scale_frame(frame):
+        img = Image.fromarray(frame)
+        img = img.resize((new_size, new_size), Image.Resampling.LANCZOS)
+        return np.array(img)
+
+    scaled_clip = square_clip.fl_image(_scale_frame)
+
+    # --- 3) make a BIGGER circular mask that matches the scaled clip ---
+
+    scaled_radius = int(COVER_CIRCLE_RADIUS * scale_factor)
+    circle_mask_arr = make_circle_mask_array(new_size, scaled_radius)
     mask_clip = ImageClip(circle_mask_arr, ismask=True).set_duration(total_duration)
 
-    square_clip = square_clip.set_duration(total_duration)
-    square_clip = square_clip.set_mask(mask_clip)
+    scaled_clip = scaled_clip.set_mask(mask_clip)
 
-    # position inside the card
-    square_clip = square_clip.set_position((COVER_LEFT, COVER_TOP))
+    # --- 4) keep the SAME CENTER as original cover ---
 
-    return square_clip
+    # original cover was a COVER_SIZE square at (COVER_LEFT, COVER_TOP)
+    # its center:
+    #   cx_orig = COVER_LEFT + COVER_SIZE / 2
+    #   cy_orig = COVER_TOP  + COVER_SIZE / 2
+    #
+    # after scaling to new_size, to keep that center:
+    #   new_left = cx_orig - new_size / 2 = COVER_LEFT - (new_size - COVER_SIZE)/2
+    #   new_top  = cy_orig - new_size / 2 = COVER_TOP  - (new_size - COVER_SIZE)/2
+
+    dx = (new_size - orig_size) // 2
+    dy = (new_size - orig_size) // 2
+
+    new_left = COVER_LEFT - dx
+    new_top = COVER_TOP - dy
+
+    scaled_clip = scaled_clip.set_position((new_left, new_top))
+
+    return scaled_clip
 
 
 # ---------- Main ----------

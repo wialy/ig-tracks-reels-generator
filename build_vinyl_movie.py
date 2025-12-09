@@ -5,7 +5,7 @@ import json
 
 import numpy as np
 from PIL import Image as PILImage
-from moviepy.editor import VideoFileClip, CompositeVideoClip, VideoClip
+from moviepy.editor import VideoFileClip, CompositeVideoClip, VideoClip, vfx
 
 # ------------------- CONFIG -------------------
 
@@ -13,7 +13,10 @@ ANALYSIS_JSON_FILENAME = "analysis.json"
 OUTPUT_FILENAME = "_vinyl_movie.mp4"
 
 # Percentage of video width that the cover should occupy (0.0 - 1.0)
-COVER_WIDTH_FRACTION = 0.5
+COVER_WIDTH_FRACTION = 0.6
+
+# Fixed target duration (seconds) for the output video
+TARGET_DURATION_SEC = 10.0
 
 
 # ------------------- HELPER FUNCTIONS -------------------
@@ -33,7 +36,12 @@ def get_script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def create_vinyl_video(template_video_path: str, cover_path: str, total_target_sec: float, output_path: str) -> str:
+def create_vinyl_video(
+    template_video_path: str,
+    cover_path: str,
+    total_target_sec: float,  # kept for compatibility, but ignored (we use TARGET_DURATION_SEC)
+    output_path: str,
+) -> str:
 
     if not os.path.isfile(template_video_path):
         raise FileNotFoundError(f"Video file not found: {template_video_path}")
@@ -44,9 +52,8 @@ def create_vinyl_video(template_video_path: str, cover_path: str, total_target_s
     # --- BASE VIDEO ---
     base_clip = VideoFileClip(template_video_path)
 
-    # Trim to total_target_sec (if shorter, take the whole video)
-    duration = min(total_target_sec, base_clip.duration) if total_target_sec else base_clip.duration
-    base_clip = base_clip.subclip(0, duration)
+    # Loop or trim the template so that final base_clip is exactly TARGET_DURATION_SEC
+    base_clip = base_clip.fx(vfx.loop, duration=TARGET_DURATION_SEC)
 
     # --- Load and scale cover in PIL ---
     pil_img = PILImage.open(cover_path).convert("RGB")
@@ -77,11 +84,11 @@ def create_vinyl_video(template_video_path: str, cover_path: str, total_target_s
     def make_mask_frame(t):
         return mask_array
 
-    mask_clip = VideoClip(make_mask_frame, ismask=True, duration=base_clip.duration)
+    mask_clip = VideoClip(make_mask_frame, ismask=True, duration=TARGET_DURATION_SEC)
 
     # --- Cover clip with manual rotation ---
-    # one full rotation for the duration of the video
-    rotation_speed_deg_per_sec = 360.0 / base_clip.duration
+    # one full rotation over TARGET_DURATION_SEC
+    rotation_speed_deg_per_sec = 360.0 / TARGET_DURATION_SEC
 
     def make_rotated_frame(t):
         angle = (rotation_speed_deg_per_sec * t) % 360.0
@@ -90,13 +97,13 @@ def create_vinyl_video(template_video_path: str, cover_path: str, total_target_s
         rotated = img.rotate(-angle, resample=PILImage.BICUBIC, expand=False)
         return np.array(rotated)
 
-    cover_clip = VideoClip(make_rotated_frame, duration=base_clip.duration)
+    cover_clip = VideoClip(make_rotated_frame, duration=TARGET_DURATION_SEC)
     cover_clip.size = (cover_w, cover_h)
     cover_clip = cover_clip.set_position(("center", "center"))
     cover_clip.mask = mask_clip  # circular mask
 
     # --- COMPOSITE VIDEO ---
-    final_clip = CompositeVideoClip([base_clip, cover_clip])
+    final_clip = CompositeVideoClip([base_clip, cover_clip]).set_duration(TARGET_DURATION_SEC)
     final_clip = final_clip.set_audio(base_clip.audio)
 
     final_clip.write_videofile(
@@ -127,6 +134,7 @@ def main():
     # Load analysis.json
     data, json_path = load_analysis_json(folder_path)
 
+    # We ignore total_target_sec here and always use TARGET_DURATION_SEC
     total_target_sec = data.get("total_target_sec", None)
 
     tracks = data.get("tracks", [])
